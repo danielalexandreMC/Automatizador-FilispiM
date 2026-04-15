@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "radio-automator"
+version = "0.1.0"
+description = "Sistema de automatizacion radiofonica de codigo abierto"
+readme = "README.md"
+license = {text = "GPL-3.0"}
+requires-python = ">=3.11"
+dependencies = [
+    "PyGObject>=3.44",
+    "SQLAlchemy>=2.0",
+    "feedparser>=6.0",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+radio-automator = "radio_automator.main:main"
+
+[tool.setuptools.packages.find]
+include = ["radio_automator*"]
