@@ -167,8 +167,8 @@ pytest-cov >= 4.0
 
 ```bash
 # 1. Clonar el repositorio
-git clone https://github.com/tu-usuario/radio-automator.git
-cd radio-automator
+git clone https://github.com/danielalexandreMC/Automatizador-FilispiM.git
+cd Automatizador-FilispiM
 
 # 2. Crear un entorno virtual (opcional pero recomendado)
 python3 -m venv .venv
