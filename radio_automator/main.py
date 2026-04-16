@@ -94,7 +94,7 @@ class RadioAutomator(Gtk.Application):
         Gtk.Application.do_startup(self)
         self._setup_actions()
         self._apply_dark_theme()
-        load_theme()
+        # load_theme()
 
         # Inicializar sistema de logging
         bus = get_event_bus()
@@ -107,6 +107,10 @@ class RadioAutomator(Gtk.Application):
     def do_activate(self):
         if not self._window:
             self._create_window()
+            
+        # Aplicar o CSS despois de que o display existe
+        load_theme()
+        
         self._window.present()
 
     def _create_window(self):
