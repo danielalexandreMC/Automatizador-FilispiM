@@ -15,7 +15,6 @@ from radio_automator.services.parrilla_service import (
     ParrillaService, get_parrilla_service,
     GridEvent, ConflictInfo, NowPlayingInfo,
     DAY_NAMES_SHORT, HOUR_START, HOUR_END,
-    format_time_range,
 )
 from radio_automator.services.automation_engine import (
     get_automation_engine, PlaybackSource, AutomationStatus
@@ -81,7 +80,7 @@ class EventBlock(Gtk.Box):
 
         # Hora (solo si hay espacio suficiente)
         if grid_event.duration_minutes >= 45:
-            time_str = format_time_range(grid_event.start_time, grid_event.end_time)
+            time_str = ParrillaService.format_time_range(grid_event.start_time, grid_event.end_time)
             time_label = Gtk.Label(label=time_str)
             time_label.set_xalign(0)
             time_label.set_ellipsize(Pango.EllipsizeMode.END)
