@@ -511,7 +511,7 @@ class ParrillaPanel(PanelContainer):
 
         info_lines = [
             f"Evento: {ge.name}",
-            f"Horario: {format_time_range(ge.start_time, ge.end_time)}",
+            f"Horario: {ParrillaService.format_time_range(ge.start_time, ge.end_time)}",
             f"Dia: {DAY_NAMES_SHORT[ge.day_index]}",
             f"Tipo: {'📡 Streaming' if ge.is_streaming else '🎵 Normal'}",
         ]
