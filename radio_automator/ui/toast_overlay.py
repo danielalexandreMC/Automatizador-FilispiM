@@ -185,7 +185,7 @@ class ToastOverlay(Gtk.Overlay):
         self._toast_box.set_valign(Gtk.Align.START)
         self._toast_box.set_margin_top(8)
         self._toast_box.set_margin_end(8)
-        self._toast_box.set_width_request(self.TOAST_WIDTH)
+        self._toast_box.set_size_request(self.TOAST_WIDTH, -1)
 
         # Añadir como overlay child
         self.add_overlay(self._toast_box)
@@ -223,7 +223,7 @@ class ToastOverlay(Gtk.Overlay):
             notification,
             on_dismiss=lambda nid=notification.id: self._remove_toast(nid)
         )
-        toast.set_width_request(self.TOAST_WIDTH)
+        toast.set_size_request(self.TOAST_WIDTH, -1)
 
         self._active_toasts[notification.id] = toast
         self._toast_box.append(toast)

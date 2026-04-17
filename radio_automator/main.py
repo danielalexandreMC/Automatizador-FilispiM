@@ -106,11 +106,8 @@ class RadioAutomator(Gtk.Application):
 
     def do_activate(self):
         if not self._window:
+            load_theme()
             self._create_window()
-            
-        # Aplicar o CSS despois de que o display existe
-        load_theme()
-        
         self._window.present()
 
     def _create_window(self):

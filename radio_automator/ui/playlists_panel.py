@@ -12,6 +12,14 @@ from radio_automator.services.playlist_service import (
     PlaylistService, PlaylistDTO, PlaylistProtectedError, PlaylistError
 )
 
+# Función auxiliar (engadir despois dos imports)
+def _clear_box(box):
+    """Eliminar todos os fillows dun Box."""
+    child = box.get_first_child()
+    while child is not None:
+        next_child = child.get_next_sibling()
+        box.remove(child)
+        child = next_child
 
 # ═══════════════════════════════════════
 # Fila de playlist en la lista
@@ -133,7 +141,7 @@ class PlaylistsPanel(PanelContainer):
     def refresh(self):
         """Recargar la lista de playlists."""
         # Limpiar lista existente
-        self._list.remove_all()
+        _clear_box(self._list)
         self._rows.clear()
 
         playlists = self._service.get_all()

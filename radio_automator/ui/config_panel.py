@@ -9,6 +9,7 @@ from gi.repository import Gtk, Gio, GLib
 
 from radio_automator.core.config import get_config
 
+from radio_automator.ui.file_dialogs import open_file_chooser
 
 class ConfigPanel(Gtk.Box):
     """Panel de configuracion del sistema."""
@@ -184,21 +185,13 @@ class ConfigPanel(Gtk.Box):
         browse_btn.set_tooltip_text("Seleccionar carpeta")
 
         def on_browse(btn):
-            dialog = Gtk.FileChooserNative(
-                title="Seleccionar carpeta",
+            root = self.get_root() or None
+            folders = open_file_chooser(
+                root, "Seleccionar carpeta",
                 action=Gtk.FileChooserAction.SELECT_FOLDER,
-                transient_for=self.get_root() if self.get_root() else None,
             )
-
-            def on_response(dialog, response_id):
-                if response_id == Gtk.ResponseType.ACCEPT:
-                    f = dialog.get_file()
-                    if f:
-                        path_label.set_label(f.get_path())
-                dialog.destroy()
-
-            dialog.connect("response", on_response)
-            dialog.show()
+            if folders:
+                path_label.set_label(folders[0])
 
         browse_btn.connect("clicked", on_browse)
         row.append(browse_btn)

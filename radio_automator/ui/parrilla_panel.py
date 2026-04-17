@@ -8,7 +8,7 @@ deteccion de conflictos, y edicion rapida de eventos.
 import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, GLib, Pango
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from radio_automator.ui.layout import PanelContainer
 from radio_automator.services.parrilla_service import (
@@ -163,7 +163,7 @@ class DayColumn(Gtk.Box):
 
         # Grid de fondo (lineas horarias)
         grid_widget = self._create_hour_grid()
-        self._overlay.add_child(grid_widget)
+        self._overlay.set_child(grid_widget)
 
         # Posicionar bloques de eventos
         for ge in sorted(events, key=lambda e: e.start_minutes):
@@ -320,9 +320,9 @@ class ParrillaPanel(PanelContainer):
 
     def refresh(self):
         """Recargar la parrilla completa."""
-        week_data = self._service.get_events_for_week(
-            week_offset=self._week_offset
-        )
+        from datetime import timedelta
+        week_start = self._service._get_week_start(date.today()) + timedelta(weeks=self._week_offset)
+        week_data = self._service.get_events_for_week(week_start=week_start)
 
         self._week_data = week_data
 
@@ -384,7 +384,7 @@ class ParrillaPanel(PanelContainer):
     def _build_grid_header(self):
         """Crear la fila de cabecera con nombres de dias."""
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        header.set_height_request(30)
+        header.set_size_request(-1, 30)
 
         # Columna de horas (vaciamos el header, solo label)
         hour_col = Gtk.Box()

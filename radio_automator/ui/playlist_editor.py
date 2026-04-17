@@ -12,6 +12,16 @@ from radio_automator.services.playlist_service import (
 )
 from radio_automator.services.folder_scanner import FolderScanner
 
+from radio_automator.ui.file_dialogs import open_file_chooser, AUDIO_FILTERS
+
+# Función auxiliar (engadir despois dos imports)
+def _clear_box(box):
+    """Eliminar todos os fillows dun Box."""
+    child = box.get_first_child()
+    while child is not None:
+        next_child = child.get_next_sibling()
+        box.remove(child)
+        child = next_child
 
 # ═══════════════════════════════════════
 # Fila de item en la lista de playlist
@@ -197,7 +207,7 @@ class PlaylistEditor(Gtk.Box):
 
     def refresh(self):
         """Recargar los items de la playlist."""
-        self._items_list.remove_all()
+        _clear_box(self._items_list)
         self._items = self._service.get_items(self._dto.id)
 
         if not self._items:
@@ -229,78 +239,39 @@ class PlaylistEditor(Gtk.Box):
 
     def _add_track(self, _btn):
         """Dialogo para seleccionar archivos de audio."""
-        dialog = Gtk.FileChooserNative(
-            title="Seleccionar pistas de audio",
-            action=Gtk.FileChooserAction.OPEN,
-            transient_for=self.get_root() if self.get_root() else None,
-        )
-        dialog.set_select_multiple(True)
-
-        # Filtro de audio
-        filter_audio = Gtk.FileFilter()
-        filter_audio.set_name("Archivos de audio")
-        for ext in ["*.mp3", "*.wav", "*.ogg", "*.flac", "*.opus",
-                     "*.aac", "*.m4a", "*.wma"]:
-            filter_audio.add_pattern(ext)
-        dialog.add_filter(filter_audio)
-
-        filter_all = Gtk.FileFilter()
-        filter_all.set_name("Todos los archivos")
-        filter_all.add_pattern("*")
-        dialog.add_filter(filter_all)
-
-        def on_response(dialog, response_id):
-            if response_id == Gtk.ResponseType.ACCEPT:
-                files = dialog.get_files()
-                for f in files:
-                    filepath = f.get_path()
-                    if filepath:
-                        try:
-                            self._service.add_item(
-                                playlist_id=self._dto.id,
-                                item_type="track",
-                                filepath=filepath,
-                            )
-                        except Exception as e:
-                            print(f"[PlaylistEditor] Error al añadir pista: {e}")
-                self.refresh()
-            dialog.destroy()
-
-        dialog.connect("response", on_response)
-        dialog.show()
+        root = self.get_root() or None
+        files = open_file_chooser(root, "Seleccionar pistas de audio",
+                                  action=Gtk.FileChooserAction.OPEN,
+                                  select_multiple=True,
+                                  filters=AUDIO_FILTERS)
+        for filepath in files:
+            try:
+                self._service.add_item(
+                    playlist_id=self._dto.id,
+                    item_type="track",
+                    filepath=filepath,
+                )
+            except Exception as e:
+                print(f"[PlaylistEditor] Error al anadir pista: {e}")
+        if files:
+            self.refresh()
 
     def _add_folder(self, _btn):
         """Dialogo para seleccionar una carpeta de audio."""
-        dialog = Gtk.FileChooserNative(
-            title="Seleccionar carpeta de audio",
-            action=Gtk.FileChooserAction.SELECT_FOLDER,
-            transient_for=self.get_root() if self.get_root() else None,
-        )
-
-        def on_response(dialog, response_id):
-            if response_id == Gtk.ResponseType.ACCEPT:
-                folder = dialog.get_file()
-                if folder:
-                    path = folder.get_path()
-                    if path:
-                        try:
-                            # Registrar carpeta en el sistema anti-repeticion
-                            count = FolderScanner.register_folder(path)
-                            print(f"[PlaylistEditor] Registrados {count} archivos nuevos en carpeta")
-
-                            # Añadir la carpeta como item de playlist
-                            self._service.add_item(
-                                playlist_id=self._dto.id,
-                                item_type="folder",
-                                folder_path=path,
-                            )
-                            self.refresh()
-                        except Exception as e:
-                            print(f"[PlaylistEditor] Error al añadir carpeta: {e}")
-            dialog.destroy()
-
-        dialog.connect("response", on_response)
-        dialog.show()
+        root = self.get_root() or None
+        folders = open_file_chooser(root, "Seleccionar carpeta de audio",
+                                    action=Gtk.FileChooserAction.SELECT_FOLDER)
+        for folder in folders:
+            try:
+                self._service.add_item(
+                    playlist_id=self._dto.id,
+                    item_type="folder",
+                    filepath=folder,
+                )
+            except Exception as e:
+                print(f"[PlaylistEditor] Error al anadir carpeta: {e}")
+        if folders:
+            self.refresh()
 
     def _add_playlist(self, _btn):
         """Dialogo para seleccionar una playlist existente como item."""

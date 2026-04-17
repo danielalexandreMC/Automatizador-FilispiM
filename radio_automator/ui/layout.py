@@ -7,6 +7,14 @@ import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Gio, GLib, Pango
 
+# Función auxiliar (engadir despois dos imports)
+def _clear_box(box):
+    """Eliminar todos os fillows dun Box."""
+    child = box.get_first_child()
+    while child is not None:
+        next_child = child.get_next_sibling()
+        box.remove(child)
+        child = next_child
 
 # ═══════════════════════════════════════
 # Sidebar de navegacion
@@ -192,7 +200,7 @@ class PanelContainer(Gtk.Box):
 
     def set_empty_state(self, icon: str = "🎵", message: str = "No hay elementos"):
         """Mostrar un estado vacio cuando no hay items."""
-        self._content.remove_all()
+        _clear_box(self._content)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         box.add_css_class("ra-empty-state")

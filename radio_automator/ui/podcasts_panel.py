@@ -13,6 +13,14 @@ from radio_automator.services.podcast_service import (
     PodcastError, FeedNotFoundError, FeedLimitError
 )
 
+# Función auxiliar (engadir despois dos imports)
+def _clear_box(box):
+    """Eliminar todos os fillows dun Box."""
+    child = box.get_first_child()
+    while child is not None:
+        next_child = child.get_next_sibling()
+        box.remove(child)
+        child = next_child
 
 # ═══════════════════════════════════════
 # Fila de feed
@@ -158,7 +166,7 @@ class EpisodesView(Gtk.Box):
         self.append(scroll)
 
     def refresh(self):
-        self._list.remove_all()
+        _clear_box(self._list)
         episodes = self._service.get_episodes(self._dto.id)
 
         if not episodes:
@@ -301,7 +309,7 @@ class PodcastsPanel(PanelContainer):
             pass
 
     def _refresh_feeds(self):
-        self._feeds_list.remove_all()
+        _clear_box(self._feeds_list)
         feeds = self._service.get_all_feeds()
 
         if not feeds:
@@ -325,7 +333,7 @@ class PodcastsPanel(PanelContainer):
     def _show_episodes(self, dto: FeedDTO):
         """Mostrar la vista de episodios de un feed."""
         # Limpiar contenido actual
-        self.content.remove_all()
+        _clear_box(self.content)
 
         # Crear vista de episodios
         view = EpisodesView(dto, on_back=self._back_to_feeds)
@@ -337,7 +345,7 @@ class PodcastsPanel(PanelContainer):
     def _back_to_feeds(self):
         """Volver a la vista de feeds."""
         self._current_view = "feeds"
-        self.content.remove_all()
+        _clear_box(self.content)
 
         # Restaurar toolbar
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)

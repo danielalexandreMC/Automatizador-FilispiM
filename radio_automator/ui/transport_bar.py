@@ -172,13 +172,15 @@ class TransportBar(Gtk.Box):
             Gtk.Orientation.HORIZONTAL, 0.0, 1.0, 0.01
         )
         self._volume_scale.set_value(1.0)
-        self._volume_scale.set_width_chars(3)
         self._volume_scale.set_draw_value(False)
         self._volume_scale.add_css_class("ra-volume-scale")
         self._volume_scale.set_size_request(80, -1)
         self._volume_scale.connect("value-changed", self._on_volume_changed)
-        self._volume_scale.connect("button-press-event", self._on_volume_press)
-        self._volume_scale.connect("button-release-event", self._on_volume_release)
+        vol_gesture = Gtk.GestureClick()
+        vol_gesture.set_button(1)
+        vol_gesture.connect("pressed", lambda g, n, x, y: self._on_volume_press())
+        vol_gesture.connect("released", lambda g, n, x, y: self._on_volume_release())
+        self._volume_scale.add_controller(vol_gesture)
         vol_box.append(self._volume_scale)
 
         main_row.append(vol_box)
@@ -200,8 +202,11 @@ class TransportBar(Gtk.Box):
         self._progress_scale.set_hexpand(True)
         self._progress_scale.set_sensitive(False)
         self._progress_scale.connect("value-changed", self._on_progress_changed)
-        self._progress_scale.connect("button-press-event", self._on_progress_press)
-        self._progress_scale.connect("button-release-event", self._on_progress_release)
+        prog_gesture = Gtk.GestureClick()
+        prog_gesture.set_button(1)
+        prog_gesture.connect("pressed", lambda g, n, x, y: self._on_progress_press())
+        prog_gesture.connect("released", lambda g, n, x, y: self._on_progress_release())
+        self._progress_scale.add_controller(prog_gesture)
         self._progress_scale._seeking = False  # type: ignore[attr-defined]
 
         progress_box.append(self._progress_scale)
@@ -334,10 +339,10 @@ class TransportBar(Gtk.Box):
         self._engine.set_volume(scale.get_value())
         self._update_volume_icon()
 
-    def _on_volume_press(self, scale, event):
+    def _on_volume_press(self):
         pass  # El seek se maneja en release
 
-    def _on_volume_release(self, scale, event):
+    def _on_volume_release(self):
         pass
 
     def _on_progress_changed(self, scale):
@@ -351,11 +356,11 @@ class TransportBar(Gtk.Box):
         value = scale.get_value()
         self._engine.seek(int(value))
 
-    def _on_progress_press(self, scale, event):
+    def _on_progress_press(self):
         """Iniciar seeking cuando el usuario presiona la barra."""
         scale._seeking = True  # type: ignore[attr-defined]
 
-    def _on_progress_release(self, scale, event):
+    def _on_progress_release(self):
         """Finalizar seek cuando el usuario suelta la barra."""
         scale._seeking = False  # type: ignore[attr-defined]
         value = scale.get_value()

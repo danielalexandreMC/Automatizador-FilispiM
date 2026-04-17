@@ -11,6 +11,15 @@ from radio_automator.core.database import get_session, RadioEvent, Playlist
 from radio_automator.services.playlist_service import PlaylistService
 from radio_automator.ui.layout import PanelContainer
 
+# Función auxiliar (engadir despois dos imports)
+def _clear_box(box):
+    """Eliminar todos os fillows dun Box."""
+    child = box.get_first_child()
+    while child is not None:
+        next_child = child.get_next_sibling()
+        box.remove(child)
+        child = next_child
+
 
 class EventRow(Gtk.Box):
     """Fila visual para un evento programado."""
@@ -119,7 +128,7 @@ class EventsPanel(PanelContainer):
 
     def refresh(self):
         """Recargar la lista de eventos."""
-        self._list.remove_all()
+        _clear_box(self._list)
         events = (
             self._session.query(RadioEvent)
             .filter_by(is_active=True)

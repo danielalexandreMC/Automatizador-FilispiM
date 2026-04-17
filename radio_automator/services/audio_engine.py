@@ -149,11 +149,11 @@ class AudioEngine:
         try:
             import gi
             gi.require_version('Gst', '1.0')
-            from gi.repository import Gst
+            from gi.repository import Gst, GLib
             Gst.init(None)
             self._gst_available = True
             self._Gst = Gst
-            self._GLib = __import__('gi.repository.GLib', fromlist=['GLib']).GLib
+            self._GLib = GLib
             print("[AudioEngine] GStreamer inicializado correctamente")
         except (ImportError, ValueError) as e:
             print(f"[AudioEngine] GStreamer no disponible: {e}")
@@ -827,15 +827,9 @@ class AudioEngine:
         get_event_bus().publish("audio.error", {"message": error_str}, Priority.HIGH)
 
     def _safe_call(self, callback, *args):
-        """Ejecutar callback de forma directa.
-
-        Los callbacks se invocan siempre de forma sincrona. La responsabilidad
-        de despachar en el hilo principal (via GLib.idle_add) recae en la capa
-        de UI (TransportBar), que ya envuelve cada handler con idle_add cuando
-        GStreamer esta disponible.
-        """
+        """Ejecutar callback en el hilo principal via GLib.idle_add."""
         try:
-            callback(*args)
+            self._GLib.idle_add(callback, *args)
         except Exception as e:
             print(f"[AudioEngine] Error en callback: {e}")
 
