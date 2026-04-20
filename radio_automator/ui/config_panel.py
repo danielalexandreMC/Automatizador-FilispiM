@@ -252,104 +252,113 @@ class ConfigPanel(Gtk.Box):
 
     def _load_values(self):
         """Cargar valores actuales de la configuracion."""
-        # Station name
+        # Station name - gardar referencia directa
         name = self._config.get("station_name", "Mi Emisora")
-        self._station_name_entry.get_last_child().set_text(name)  # type: ignore
+        self._name_entry = self._station_name_entry.get_last_child()  # type: ignore
+        if self._name_entry:
+            self._name_entry.set_text(name)
 
-        # Music folder
+        # Music folder - gardar referencia directa
         folder = self._config.get("music_folder", "")
-        folder_label = self._find_child_by_config_key("music_folder")
-        if folder_label:
-            folder_label.set_label(folder)
+        self._folder_label = self._find_child_by_config_key("music_folder")
+        if self._folder_label:
+            self._folder_label.set_label(folder)
 
         # Crossfade duration
-        self._crossfade_spin.get_last_child().set_value(  # type: ignore
-            self._config.get_float("crossfade_duration", 3.0)
-        )
+        self._crossfade_spin_widget = self._crossfade_spin.get_last_child()  # type: ignore
+        if self._crossfade_spin_widget:
+            self._crossfade_spin_widget.set_value(
+                self._config.get_float("crossfade_duration", 3.0)
+            )
 
         # Crossfade curve
-        combo = self._crossfade_combo.get_last_child()
-        if combo:
+        self._crossfade_combo_widget = self._crossfade_combo.get_last_child()  # type: ignore
+        if self._crossfade_combo_widget:
             curve = self._config.get("crossfade_curve", "linear")
-            values = combo._values if hasattr(combo, '_values') else ["linear", "logarithmic", "sigmoid"]  # type: ignore
+            values = self._crossfade_combo_widget._values if hasattr(self._crossfade_combo_widget, '_values') else ["linear", "logarithmic", "sigmoid"]  # type: ignore
             if curve in values:
-                combo.set_selected(values.index(curve))
+                self._crossfade_combo_widget.set_selected(values.index(curve))
 
         # Switches
-        self._silence_switch.get_last_child().set_active(  # type: ignore
-            self._config.get_bool("silence_detection", True)
-        )
-        self._norm_switch.get_last_child().set_active(  # type: ignore
-            self._config.get_bool("normalization", False)
-        )
+        self._silence_switch_widget = self._silence_switch.get_last_child()  # type: ignore
+        if self._silence_switch_widget:
+            self._silence_switch_widget.set_active(
+                self._config.get_bool("silence_detection", True)
+            )
+        self._norm_switch_widget = self._norm_switch.get_last_child()  # type: ignore
+        if self._norm_switch_widget:
+            self._norm_switch_widget.set_active(
+                self._config.get_bool("normalization", False)
+            )
 
         # Podcast settings
-        self._podcast_interval.get_last_child().set_value(  # type: ignore
-            self._config.get_int("podcast_check_interval_hours", 24)
-        )
-        self._podcast_downloads.get_last_child().set_value(  # type: ignore
-            self._config.get_int("podcast_max_concurrent_downloads", 3)
-        )
+        self._podcast_interval_widget = self._podcast_interval.get_last_child()  # type: ignore
+        if self._podcast_interval_widget:
+            self._podcast_interval_widget.set_value(
+                self._config.get_int("podcast_check_interval_hours", 24)
+            )
+        self._podcast_downloads_widget = self._podcast_downloads.get_last_child()  # type: ignore
+        if self._podcast_downloads_widget:
+            self._podcast_downloads_widget.set_value(
+                self._config.get_int("podcast_max_concurrent_downloads", 3)
+            )
 
     def _find_child_by_config_key(self, key: str):
         """Buscar un widget hijo por su config_key."""
         def _search(widget):
             if hasattr(widget, 'config_key') and widget.config_key == key:
                 return widget
-            if hasattr(widget, 'get_last_child'):
-                child = widget.get_last_child()
-                if child:
-                    result = _search(child)
-                    if result:
-                        return result
+            child = widget.get_first_child()
+            while child:
+                result = _search(child)
+                if result:
+                    return result
+                child = child.get_next_sibling()
             return None
 
-        # Buscar en cada fila directa
-        for i in range(self.get_first_child() is not None and 1 or 0):
-            pass
+        child = self.get_first_child()
+        while child:
+            result = _search(child)
+            if result:
+                return result
+            child = child.get_next_sibling()
         return None
 
     def _save(self, _btn):
         """Guardar todos los valores de configuracion."""
         try:
-            # Station name
-            name_entry = self._station_name_entry.get_last_child()
-            if name_entry:
-                self._config.set("station_name", name_entry.get_text())
+            # Station name - referencia directa
+            if hasattr(self, '_name_entry') and self._name_entry:
+                self._config.set("station_name", self._name_entry.get_text())
 
-            # Music folder
-            folder_label = self._find_child_by_config_key("music_folder")
-            if folder_label and hasattr(folder_label, 'get_label'):
-                self._config.set("music_folder", folder_label.get_label())
+            # Music folder - referencia directa
+            if hasattr(self, '_folder_label') and self._folder_label:
+                self._config.set("music_folder", self._folder_label.get_label())
 
             # Crossfade
-            crossfade_spin = self._crossfade_spin.get_last_child()
-            if crossfade_spin:
-                self._config.set_float("crossfade_duration", crossfade_spin.get_value())
+            if hasattr(self, '_crossfade_spin_widget') and self._crossfade_spin_widget:
+                self._config.set_float("crossfade_duration", self._crossfade_spin_widget.get_value())
 
-            combo = self._crossfade_combo.get_last_child()
-            if combo and hasattr(combo, '_values'):
-                idx = combo.get_selected()
-                if 0 <= idx < len(combo._values):
-                    self._config.set("crossfade_curve", combo._values[idx])
+            if hasattr(self, '_crossfade_combo_widget') and self._crossfade_combo_widget:
+                combo = self._crossfade_combo_widget
+                if hasattr(combo, '_values'):
+                    idx = combo.get_selected()
+                    if 0 <= idx < len(combo._values):
+                        self._config.set("crossfade_curve", combo._values[idx])
 
             # Switches
-            silence_switch = self._silence_switch.get_last_child()
-            if silence_switch:
-                self._config.set_bool("silence_detection", silence_switch.get_active())
+            if hasattr(self, '_silence_switch_widget') and self._silence_switch_widget:
+                self._config.set_bool("silence_detection", self._silence_switch_widget.get_active())
 
-            norm_switch = self._norm_switch.get_last_child()
-            if norm_switch:
-                self._config.set_bool("normalization", norm_switch.get_active())
+            if hasattr(self, '_norm_switch_widget') and self._norm_switch_widget:
+                self._config.set_bool("normalization", self._norm_switch_widget.get_active())
 
             # Podcasts
-            pod_interval = self._podcast_interval.get_last_child()
-            if pod_interval:
-                self._config.set_int("podcast_check_interval_hours", int(pod_interval.get_value()))
+            if hasattr(self, '_podcast_interval_widget') and self._podcast_interval_widget:
+                self._config.set_int("podcast_check_interval_hours", int(self._podcast_interval_widget.get_value()))
 
-            pod_downloads = self._podcast_downloads.get_last_child()
-            if pod_downloads:
-                self._config.set_int("podcast_max_concurrent_downloads", int(pod_downloads.get_value()))
+            if hasattr(self, '_podcast_downloads_widget') and self._podcast_downloads_widget:
+                self._config.set_int("podcast_max_concurrent_downloads", int(self._podcast_downloads_widget.get_value()))
 
             self._status_label.set_label("✓ Configuracion guardada")
             self._status_label.add_css_class("ra-label-success")

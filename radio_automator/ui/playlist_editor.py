@@ -266,7 +266,7 @@ class PlaylistEditor(Gtk.Box):
                 self._service.add_item(
                     playlist_id=self._dto.id,
                     item_type="folder",
-                    filepath=folder,
+                    folder_path=folder,
                 )
             except Exception as e:
                 print(f"[PlaylistEditor] Error al anadir carpeta: {e}")
@@ -283,17 +283,18 @@ class PlaylistEditor(Gtk.Box):
             self._show_error("No hay otras playlists disponibles para anidar")
             return
 
-        dialog = Gtk.MessageDialog(
+        dialog = Gtk.Window(
             transient_for=self.get_root() if self.get_root() else None,
             modal=True,
-            message_type=Gtk.MessageType.QUESTION,
-            buttons=Gtk.ButtonsType.OK_CANCEL,
             title="Añadir Playlist",
+            default_width=380,
+            default_height=200,
         )
+        dialog.set_resizable(False)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        box.set_margin_top(12)
-        box.set_margin_bottom(12)
+        box.set_margin_top(16)
+        box.set_margin_bottom(16)
         box.set_margin_start(16)
         box.set_margin_end(16)
 
@@ -311,25 +312,42 @@ class PlaylistEditor(Gtk.Box):
         combo.add_css_class("ra-combo")
         box.append(combo)
 
+        # Botons
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_box.set_halign(Gtk.Align.END)
+        btn_box.set_margin_top(8)
+
+        cancel_btn = Gtk.Button(label="Cancelar")
+        cancel_btn.add_css_class("ra-button")
+        btn_box.append(cancel_btn)
+
+        ok_btn = Gtk.Button(label="Engadir")
+        ok_btn.add_css_class("ra-button")
+        ok_btn.add_css_class("ra-button-primary")
+        btn_box.append(ok_btn)
+        box.append(btn_box)
+
         dialog.set_child(box)
 
-        def on_response(dialog, response_id):
-            if response_id == Gtk.ResponseType.OK:
-                idx = combo.get_selected()
-                if 0 <= idx < len(available):
-                    selected = available[idx]
-                    try:
-                        self._service.add_item(
-                            playlist_id=self._dto.id,
-                            item_type="playlist",
-                            referenced_playlist_id=selected.id,
-                        )
-                        self.refresh()
-                    except Exception as e:
-                        self._show_error(f"Error al anadir playlist: {e}")
+        def do_add():
+            idx = combo.get_selected()
+            if 0 <= idx < len(available):
+                selected = available[idx]
+                try:
+                    self._service.add_item(
+                        playlist_id=self._dto.id,
+                        item_type="playlist",
+                        referenced_playlist_id=selected.id,
+                    )
+                    self.refresh()
+                except Exception as e:
+                    self._show_error(f"Error al anadir playlist: {e}")
             dialog.destroy()
 
-        dialog.connect("response", on_response)
+        ok_btn.connect("clicked", lambda b: do_add())
+        cancel_btn.connect("clicked", lambda b: dialog.destroy())
+        dialog.connect("close-request", lambda w: w.destroy())
+
         dialog.show()
 
     def _add_time_announce(self, _btn):
@@ -370,25 +388,56 @@ class PlaylistEditor(Gtk.Box):
 
     def _clear_all(self, _btn):
         """Confirmar vaciar toda la playlist."""
-        dialog = Gtk.MessageDialog(
+        dialog = Gtk.Window(
             transient_for=self.get_root() if self.get_root() else None,
             modal=True,
-            message_type=Gtk.MessageType.WARNING,
-            buttons=Gtk.ButtonsType.YES_NO,
             title="Vaciar Playlist",
-            text=f"¿Seguro que quieres vaciar \"{self._dto.name}\"? Esta accion no se puede deshacer.",
+            default_width=350,
+            default_height=160,
         )
+        dialog.set_resizable(False)
 
-        def on_response(dialog, response_id):
-            if response_id == Gtk.ResponseType.YES:
-                try:
-                    self._service.clear_items(self._dto.id)
-                    self.refresh()
-                except Exception as e:
-                    self._show_error(f"Error al vaciar: {e}")
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        main_box.set_margin_top(16)
+        main_box.set_margin_bottom(16)
+        main_box.set_margin_start(16)
+        main_box.set_margin_end(16)
+
+        msg = Gtk.Label(
+            label=f"¿Seguro que quieres vaciar \"{self._dto.name}\"?\nEsta accion no se puede deshacer."
+        )
+        msg.set_xalign(0)
+        main_box.append(msg)
+
+        # Botons
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_box.set_halign(Gtk.Align.END)
+        btn_box.set_margin_top(8)
+
+        cancel_btn = Gtk.Button(label="Cancelar")
+        cancel_btn.add_css_class("ra-button")
+        btn_box.append(cancel_btn)
+
+        clear_btn = Gtk.Button(label="Vaciar")
+        clear_btn.add_css_class("ra-button-danger")
+        clear_btn.add_css_class("ra-button")
+        btn_box.append(clear_btn)
+        main_box.append(btn_box)
+
+        dialog.set_child(main_box)
+
+        def do_clear():
+            try:
+                self._service.clear_items(self._dto.id)
+                self.refresh()
+            except Exception as e:
+                self._show_error(f"Error al vaciar: {e}")
             dialog.destroy()
 
-        dialog.connect("response", on_response)
+        clear_btn.connect("clicked", lambda b: do_clear())
+        cancel_btn.connect("clicked", lambda b: dialog.destroy())
+        dialog.connect("close-request", lambda w: w.destroy())
+
         dialog.show()
 
     def _show_error(self, message: str):

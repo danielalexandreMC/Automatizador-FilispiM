@@ -26,7 +26,7 @@ SHORTCUT_GROUPS = [
     {
         "title": "Transporte de audio",
         "shortcuts": [
-            ("Espacio", "Reproducir / Pausar"),
+            ("Ctrl + Espacio", "Reproducir / Pausar"),
             ("Ctrl + Derecha", "Pista siguiente"),
             ("Ctrl + Izquierda", "Pista anterior"),
             ("Ctrl + S", "Detener"),

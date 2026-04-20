@@ -146,14 +146,20 @@ class AudioEngine:
 
     def _init_gst(self):
         """Inicializar GStreamer. Si no esta disponible, funciona en modo mock."""
+        import gi
         try:
-            import gi
+            gi.require_version('GLib', '2.0')
+            from gi.repository import GLib
+            self._GLib = GLib
+        except Exception:
+            self._GLib = __import__('threading')
+            self._GLib.idle_add = lambda fn, *args: fn(*args)
+        try:
             gi.require_version('Gst', '1.0')
-            from gi.repository import Gst, GLib
+            from gi.repository import Gst
             Gst.init(None)
             self._gst_available = True
             self._Gst = Gst
-            self._GLib = GLib
             print("[AudioEngine] GStreamer inicializado correctamente")
         except (ImportError, ValueError) as e:
             print(f"[AudioEngine] GStreamer no disponible: {e}")
@@ -194,13 +200,32 @@ class AudioEngine:
                      on_vu_changed: Callable[[VUMeterData], None] | None = None,
                      on_error: Callable[[str], None] | None = None,
                      on_tags_changed: Callable[[TrackInfo], None] | None = None):
-        """Configurar callbacks para eventos del motor. Se ejecutan en hilo principal."""
-        self._on_state_changed = on_state_changed
-        self._on_position_changed = on_position_changed
-        self._on_track_finished = on_track_finished
-        self._on_vu_changed = on_vu_changed
-        self._on_error = on_error
-        self._on_tags_changed = on_tags_changed
+        """Configurar callbacks para eventos del motor. Se ejecutan en hilo principal.
+        Os callbacks son aditivos: non se borran os anteriores, engadense."""
+        if on_state_changed:
+            self._on_state_changed = on_state_changed
+        if on_position_changed:
+            prev = self._on_position_changed
+            if prev:
+                self._on_position_changed = lambda info: (prev(info), on_position_changed(info))
+            else:
+                self._on_position_changed = on_position_changed
+        if on_track_finished:
+            self._on_track_finished = on_track_finished
+        if on_vu_changed:
+            prev = self._on_vu_changed
+            if prev:
+                self._on_vu_changed = lambda vu: (prev(vu), on_vu_changed(vu))
+            else:
+                self._on_vu_changed = on_vu_changed
+        if on_error:
+            self._on_error = on_error
+        if on_tags_changed:
+            prev = self._on_tags_changed
+            if prev:
+                self._on_tags_changed = lambda info: (prev(info), on_tags_changed(info))
+            else:
+                self._on_tags_changed = on_tags_changed
 
     # ── Control de reproduccion ──
 
@@ -258,6 +283,7 @@ class AudioEngine:
             bus.connect("message::state-changed", self._on_gst_state_changed)
             bus.connect("message::tag", self._on_tag_msg)
             bus.connect("message::buffering", self._on_buffering_msg)
+            bus.connect("message::element", self._on_element_msg)
 
             # Iniciar reproduccion
             result = self._pipeline.set_state(self._Gst.State.PLAYING)
@@ -427,6 +453,7 @@ class AudioEngine:
             bus.connect("message::error", self._on_error_msg)
             bus.connect("message::state-changed", self._on_gst_state_changed)
             bus.connect("message::tag", self._on_tag_msg)
+            bus.connect("message::element", self._on_element_msg)
 
             # Iniciar nuevo pipeline
             new_pipeline.set_state(self._Gst.State.PLAYING)
@@ -669,6 +696,13 @@ class AudioEngine:
 
         if changed and self._on_tags_changed:
             self._safe_call(self._on_tags_changed, self._track_info)
+    def _on_element_msg(self, bus, message):
+        """Process element messages (level for VU meter)."""
+        if not message:
+            return
+        s = message.get_structure()
+        if s and s.get_name() == "level":
+            self._update_vu_from_structure(s)
 
     def _on_buffering_msg(self, bus, msg):
         """Buffering para streaming."""
@@ -704,6 +738,8 @@ class AudioEngine:
                         success, duration_ns = self._pipeline.query_duration(self._Gst.Format.TIME)
                         if success:
                             self._track_info.duration_ms = int(duration_ns / 1_000_000)
+
+                    # Debug posicion
 
                     # Notificar cambio de posicion
                     if self._on_position_changed:
@@ -828,8 +864,19 @@ class AudioEngine:
 
     def _safe_call(self, callback, *args):
         """Ejecutar callback en el hilo principal via GLib.idle_add."""
+        import traceback
+        def wrapper():
+            try:
+                callback(*args)
+            except Exception as e:
+                print(f"[AudioEngine] Error en idle callback {callback.__name__}: {e}")
+                traceback.print_exc()
         try:
-            self._GLib.idle_add(callback, *args)
+            if hasattr(self, '_GLib') and self._GLib:
+                self._GLib.idle_add(wrapper)
+            else:
+                from gi.repository import GLib
+                GLib.idle_add(wrapper)
         except Exception as e:
             print(f"[AudioEngine] Error en callback: {e}")
 

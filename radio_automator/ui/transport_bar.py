@@ -1,3 +1,4 @@
+from pathlib import Path
 """
 Barra de transporte (TransportBar).
 Controles de reproduccion, barra de progreso, VU meters, e info de pista.
@@ -296,7 +297,21 @@ class TransportBar(Gtk.Box):
         else:
             # No hay reproduccion, intentar reproducir la cola
             if queue.is_empty:
-                return
+                try:
+                    from radio_automator.core.database import Playlist, get_session
+                    session = get_session()
+                    cont = session.query(Playlist).filter_by(is_system=True, name="Continuidad").first()
+                    if cont:
+                        count = queue.load_playlist(cont.id, session=session)
+                    else:
+                        all_pl = session.query(Playlist).all()
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    return
+
+                if queue.is_empty:
+                    return
 
             if queue.current_item is None:
                 queue.play_next()
@@ -369,106 +384,76 @@ class TransportBar(Gtk.Box):
     # ── Handlers de eventos del motor ──
 
     def _on_engine_state_changed(self, state: PlaybackState):
-        """Actualizar UI cuando cambia el estado del motor."""
-        def _update():
-            if state == PlaybackState.PLAYING:
-                self._btn_play.set_icon_name("media-playback-pause-symbolic")
-                self._btn_play.set_tooltip_text("Pausar")
-                self._progress_scale.set_sensitive(True)
-            elif state == PlaybackState.PAUSED:
-                self._btn_play.set_icon_name("media-playback-start-symbolic")
-                self._btn_play.set_tooltip_text("Reanudar")
-            else:
-                self._btn_play.set_icon_name("media-playback-start-symbolic")
-                self._btn_play.set_tooltip_text("Reproducir")
-                self._progress_scale.set_sensitive(False)
-                self._progress_scale.set_value(0.0)
-                self._time_pos.set_label("0:00")
-                self._time_dur.set_label("0:00")
-
-            # Actualizar sidebar status
-            self._update_sidebar_status(state)
-
-        if self._engine.is_available:
-            GLib.idle_add(_update)
+        """Actualizar UI cuando cambia el estado del motor.
+        NOTA: Xa se chama via GLib.idle_add desde AudioEngine._safe_call,
+        polo que podemos executar directamente."""
+        if state == PlaybackState.PLAYING:
+            self._btn_play.set_icon_name("media-playback-pause-symbolic")
+            self._btn_play.set_tooltip_text("Pausar")
+            self._progress_scale.set_sensitive(True)
+        elif state == PlaybackState.PAUSED:
+            self._btn_play.set_icon_name("media-playback-start-symbolic")
+            self._btn_play.set_tooltip_text("Reanudar")
         else:
-            _update()
+            self._btn_play.set_icon_name("media-playback-start-symbolic")
+            self._btn_play.set_tooltip_text("Reproducir")
+            self._progress_scale.set_sensitive(False)
+            self._progress_scale.set_value(0.0)
+            self._time_pos.set_label("0:00")
+            self._time_dur.set_label("0:00")
+
+        # Actualizar sidebar status
+        self._update_sidebar_status(state)
 
     def _on_engine_position_changed(self, info: TrackInfo):
-        """Actualizar posicion y progreso."""
-        def _update():
-            if hasattr(self._progress_scale, '_seeking') and self._progress_scale._seeking:
-                return
+        """Actualizar posicion y progreso.
+        NOTA: Xa se chama via GLib.idle_add desde AudioEngine._safe_call."""
+        if hasattr(self._progress_scale, '_seeking') and self._progress_scale._seeking:
+            return
 
-            self._time_pos.set_label(info.position_str)
-            if info.duration_ms > 0:
-                self._time_dur.set_label(info.duration_str)
-                self._progress_scale.set_range(0, info.duration_ms)
-                self._progress_scale.set_value(float(info.position_ms))
-
-        if self._engine.is_available:
-            GLib.idle_add(_update)
-        else:
-            _update()
+        self._time_pos.set_label(info.position_str)
+        if info.duration_ms > 0:
+            self._time_dur.set_label(info.duration_str)
+            self._progress_scale.set_range(0, info.duration_ms)
+            self._progress_scale.set_value(float(info.position_ms))
 
     def _on_engine_track_finished(self, info: TrackInfo):
         """Pista terminada, avanzar en la cola."""
         self._queue.on_track_finished(info)
 
     def _on_engine_vu_changed(self, vu: VUMeterData):
-        """Actualizar indicadores VU."""
-        def _update():
-            self._vu_left._level = vu.level_left   # type: ignore[attr-defined]
-            self._vu_left._peak = vu.peak_left      # type: ignore[attr-defined]
-            self._vu_right._level = vu.level_right  # type: ignore[attr-defined]
-            self._vu_right._peak = vu.peak_right    # type: ignore[attr-defined]
-            self._vu_left.queue_draw()
-            self._vu_right.queue_draw()
-
-        if self._engine.is_available:
-            GLib.idle_add(_update)
-        else:
-            _update()
+        """Actualizar indicadores VU.
+        NOTA: Xa se chama via GLib.idle_add desde AudioEngine._safe_call."""
+        self._vu_left._level = vu.level_left   # type: ignore[attr-defined]
+        self._vu_left._peak = vu.peak_left      # type: ignore[attr-defined]
+        self._vu_right._level = vu.level_right  # type: ignore[attr-defined]
+        self._vu_right._peak = vu.peak_right    # type: ignore[attr-defined]
+        self._vu_left.queue_draw()
+        self._vu_right.queue_draw()
 
     def _on_engine_error(self, error_msg: str):
-        """Mostrar error."""
-        def _update():
-            self._track_title.set_label(f"Error: {error_msg[:50]}")
-            self._track_artist.set_label("")
-
-        if self._engine.is_available:
-            GLib.idle_add(_update)
-        else:
-            _update()
+        """Mostrar error.
+        NOTA: Xa se chama via GLib.idle_add desde AudioEngine._safe_call."""
+        self._track_title.set_label(f"Error: {error_msg[:50]}")
+        self._track_artist.set_label("")
 
     def _on_engine_tags_changed(self, info: TrackInfo):
-        """Actualizar info de pista desde tags."""
-        def _update():
-            if info.title:
-                self._track_title.set_label(info.title)
-            if info.artist:
-                self._track_artist.set_label(info.artist)
-
-        if self._engine.is_available:
-            GLib.idle_add(_update)
-        else:
-            _update()
+        """Actualizar info de pista desde tags.
+        NOTA: Xa se chama via GLib.idle_add desde AudioEngine._safe_call."""
+        if info.title:
+            self._track_title.set_label(info.title)
+        if info.artist:
+            self._track_artist.set_label(info.artist)
 
     # ── Handlers de la cola ──
 
     def _on_queue_changed(self):
         """La cola ha cambiado (items agregados/eliminados)."""
-        def _update():
-            if self._engine.state == PlaybackState.STOPPED and not self._queue.is_empty:
-                self._track_title.set_label("Cola lista")
-                self._track_artist.set_label(
-                    f"{self._queue.count} pistas | {self._queue.mode_label}"
-                )
-
-        if self._engine.is_available:
-            GLib.idle_add(_update)
-        else:
-            _update()
+        if self._engine.state == PlaybackState.STOPPED and not self._queue.is_empty:
+            self._track_title.set_label("Cola lista")
+            self._track_artist.set_label(
+                f"{self._queue.count} pistas | {self._queue.mode_label}"
+            )
 
     def _on_queue_current_changed(self, item):
         """Pista actual de la cola cambio."""

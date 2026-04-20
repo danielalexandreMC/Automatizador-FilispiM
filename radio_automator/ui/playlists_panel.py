@@ -170,35 +170,34 @@ class PlaylistsPanel(PanelContainer):
     def _on_delete_clicked(self, dto: PlaylistDTO):
         self._show_delete_confirm(dto)
 
-    def _show_create_dialog(self):
+    def _show_create_dialog(self, button=None):
         """Mostrar dialogo para crear nueva playlist."""
-        dialog = Gtk.MessageDialog(
+        dialog = Gtk.Window(
             transient_for=self.get_root() if self.get_root() else None,
             modal=True,
-            message_type=Gtk.MessageType.QUESTION,
-            buttons=Gtk.ButtonsType.OK_CANCEL,
-            title="Nueva Playlist",
+            title="Nova Playlist",
+            default_width=380,
+            default_height=280,
         )
+        dialog.set_resizable(False)
 
-        # Cambiar a layout personalizado
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        box.set_margin_top(12)
-        box.set_margin_bottom(12)
+        box.set_margin_top(16)
+        box.set_margin_bottom(16)
         box.set_margin_start(16)
         box.set_margin_end(16)
 
-        # Nombre
+        # Nome
         name_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        name_label = Gtk.Label(label="Nombre:")
+        name_label = Gtk.Label(label="Nome:")
         name_label.set_width_chars(12)
         name_label.set_xalign(0)
         name_box.append(name_label)
 
         name_entry = Gtk.Entry()
-        name_entry.set_placeholder_text("Nombre de la playlist")
+        name_entry.set_placeholder_text("Nome da playlist")
         name_entry.add_css_class("ra-entry")
         name_entry.set_hexpand(True)
-        name_entry.activate = lambda: dialog.response(Gtk.ResponseType.OK)  # type: ignore[assignment]
         name_box.append(name_entry)
         box.append(name_box)
 
@@ -209,62 +208,82 @@ class PlaylistsPanel(PanelContainer):
         mode_label.set_xalign(0)
         mode_box.append(mode_label)
 
-        loop_btn = Gtk.ToggleButton(label="🔄 Bucle")
+        loop_btn = Gtk.ToggleButton(label="Bucle")
         loop_btn.set_active(True)
         loop_btn.add_css_class("ra-button")
         loop_btn.connect("toggled", lambda b: single_btn.set_active(not b.get_active()))
 
-        single_btn = Gtk.ToggleButton(label="▶ Una vez")
+        single_btn = Gtk.ToggleButton(label="Unha vez")
         single_btn.add_css_class("ra-button")
 
         mode_box.append(loop_btn)
         mode_box.append(single_btn)
         box.append(mode_box)
 
-        # Descripcion del modo
+        # Descricion
         desc = Gtk.Label(
-            label="Bucle: se repite hasta que algo la interrumpa\n"
-                  "Una vez: se reproduce de principio a fin una sola vez"
+            label="Bucle: repitese ata que algo a interrompa\n"
+                  "Unha vez: reprodocese de principio a fin unha soa vez"
         )
         desc.add_css_class("ra-label-dim")
         desc.set_xalign(0)
         desc.set_margin_start(20)
         box.append(desc)
 
-        dialog.set_child(box)
-        name_entry.grab_focus()
+        # Botons Gardar / Cancelar
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_box.set_halign(Gtk.Align.END)
+        btn_box.set_margin_top(12)
 
-        def on_response(dialog, response_id):
-            if response_id == Gtk.ResponseType.OK:
-                name = name_entry.get_text().strip()
-                if not name:
-                    return
-                mode = "loop" if loop_btn.get_active() else "single"
-                try:
-                    self._service.create(name=name, mode=mode)
-                    self.refresh()
-                except PlaylistError as e:
-                    self._show_error(f"Error al crear playlist: {e}")
+        cancel_btn = Gtk.Button(label="Cancelar")
+        cancel_btn.add_css_class("ra-button")
+        cancel_btn.connect("clicked", lambda b: dialog.destroy())
+
+        save_btn = Gtk.Button(label="Gardar")
+        save_btn.add_css_class("ra-button-suggested")
+        save_btn.connect("clicked", lambda b: dialog.destroy())
+
+        btn_box.append(cancel_btn)
+        btn_box.append(save_btn)
+        box.append(btn_box)
+
+        def do_save():
+            name = name_entry.get_text().strip()
+            if not name:
+                return
+            mode = "loop" if loop_btn.get_active() else "single"
+            try:
+                self._service.create(name=name, mode=mode)
+                self.refresh()
+            except PlaylistError as e:
+                self._show_error(f"Erro ao crear playlist: {e}")
             dialog.destroy()
 
-        dialog.connect("response", on_response)
+        save_btn.connect("clicked", lambda b: do_save())
+        name_entry.connect("activate", lambda e: do_save())
+        cancel_btn.connect("clicked", lambda b: dialog.destroy())
+        dialog.connect("close-request", lambda w: w.destroy())
+
+        dialog.set_child(box)
+        name_entry.grab_focus()
         dialog.show()
 
     def _show_edit_dialog(self, dto: PlaylistDTO):
         """Mostrar dialogo para editar una playlist existente."""
-        dialog = Gtk.MessageDialog(
+        dialog = Gtk.Window(
             transient_for=self.get_root() if self.get_root() else None,
             modal=True,
-            message_type=Gtk.MessageType.QUESTION,
-            buttons=Gtk.ButtonsType.OK_CANCEL,
             title=f"Editar: {dto.name}",
+            default_width=380,
+            default_height=220,
         )
+        dialog.set_resizable(False)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        box.set_margin_top(12)
-        box.set_margin_bottom(12)
-        box.set_margin_start(16)
-        box.set_margin_end(16)
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        main_box.set_margin_top(16)
+        main_box.set_margin_bottom(16)
+        main_box.set_margin_start(16)
+        main_box.set_margin_end(16)
 
         # Nombre
         name_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -278,9 +297,9 @@ class PlaylistsPanel(PanelContainer):
         name_entry.add_css_class("ra-entry")
         name_entry.set_hexpand(True)
         name_box.append(name_entry)
-        box.append(name_box)
+        main_box.append(name_box)
 
-        # Modo (no editable para Continuidad? Si, editable)
+        # Modo
         mode_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         mode_label = Gtk.Label(label="Modo:")
         mode_label.set_width_chars(12)
@@ -298,65 +317,102 @@ class PlaylistsPanel(PanelContainer):
 
         mode_box.append(loop_btn)
         mode_box.append(single_btn)
-        box.append(mode_box)
+        main_box.append(mode_box)
 
-        dialog.set_child(box)
+        # Botons
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_box.set_halign(Gtk.Align.END)
+        btn_box.set_margin_top(8)
+
+        cancel_btn = Gtk.Button(label="Cancelar")
+        cancel_btn.add_css_class("ra-button")
+        btn_box.append(cancel_btn)
+
+        ok_btn = Gtk.Button(label="Gardar")
+        ok_btn.add_css_class("ra-button")
+        ok_btn.add_css_class("ra-button-primary")
+        btn_box.append(ok_btn)
+        main_box.append(btn_box)
+
+        dialog.set_child(main_box)
         name_entry.grab_focus()
 
-        def on_response(dialog, response_id):
-            if response_id == Gtk.ResponseType.OK:
-                name = name_entry.get_text().strip()
-                if not name:
-                    return
-                mode = "loop" if loop_btn.get_active() else "single"
-                try:
-                    self._service.update(dto.id, name=name, mode=mode)
-                    self.refresh()
-                    if self._on_playlist_edit:
-                        self._on_playlist_edit()
-                except PlaylistError as e:
-                    self._show_error(f"Error al actualizar: {e}")
+        def do_save():
+            name = name_entry.get_text().strip()
+            if not name:
+                return
+            mode = "loop" if loop_btn.get_active() else "single"
+            try:
+                self._service.update(dto.id, name=name, mode=mode)
+                self.refresh()
+                if self._on_playlist_edit:
+                    self._on_playlist_edit()
+            except PlaylistError as e:
+                self._show_error(f"Error al actualizar: {e}")
             dialog.destroy()
 
-        dialog.connect("response", on_response)
+        name_entry.connect("activate", lambda e: do_save())
+        ok_btn.connect("clicked", lambda b: do_save())
+        cancel_btn.connect("clicked", lambda b: dialog.destroy())
+        dialog.connect("close-request", lambda w: w.destroy())
+
         dialog.show()
 
     def _show_delete_confirm(self, dto: PlaylistDTO):
         """Mostrar dialogo de confirmacion para eliminar."""
-        dialog = Gtk.MessageDialog(
+        dialog = Gtk.Window(
             transient_for=self.get_root() if self.get_root() else None,
             modal=True,
-            message_type=Gtk.MessageType.WARNING,
-            buttons=Gtk.ButtonsType.YES_NO,
             title="Eliminar Playlist",
+            default_width=350,
+            default_height=160,
         )
+        dialog.set_resizable(False)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.set_margin_top(12)
-        box.set_margin_bottom(12)
-        box.set_margin_start(16)
-        box.set_margin_end(16)
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        main_box.set_margin_top(16)
+        main_box.set_margin_bottom(16)
+        main_box.set_margin_start(16)
+        main_box.set_margin_end(16)
 
         msg = Gtk.Label(
             label=f"¿Seguro que quieres eliminar la playlist \"{dto.name}\"?\n"
                   f"Tiene {dto.item_count} elemento(s)."
         )
         msg.set_xalign(0)
-        box.append(msg)
-        dialog.set_child(box)
+        main_box.append(msg)
 
-        def on_response(dialog, response_id):
-            if response_id == Gtk.ResponseType.YES:
-                try:
-                    self._service.delete(dto.id)
-                    self.refresh()
-                except PlaylistProtectedError:
-                    self._show_error("La playlist Continuidad no se puede eliminar")
-                except PlaylistError as e:
-                    self._show_error(f"Error al eliminar: {e}")
+        # Botons
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_box.set_halign(Gtk.Align.END)
+        btn_box.set_margin_top(8)
+
+        cancel_btn = Gtk.Button(label="Cancelar")
+        cancel_btn.add_css_class("ra-button")
+        btn_box.append(cancel_btn)
+
+        del_btn = Gtk.Button(label="Eliminar")
+        del_btn.add_css_class("ra-button-danger")
+        del_btn.add_css_class("ra-button")
+        btn_box.append(del_btn)
+        main_box.append(btn_box)
+
+        dialog.set_child(main_box)
+
+        def do_delete():
+            try:
+                self._service.delete(dto.id)
+                self.refresh()
+            except PlaylistProtectedError:
+                self._show_error("La playlist Continuidad no se puede eliminar")
+            except PlaylistError as e:
+                self._show_error(f"Error al eliminar: {e}")
             dialog.destroy()
 
-        dialog.connect("response", on_response)
+        del_btn.connect("clicked", lambda b: do_delete())
+        cancel_btn.connect("clicked", lambda b: dialog.destroy())
+        dialog.connect("close-request", lambda w: w.destroy())
+
         dialog.show()
 
     def _show_error(self, message: str):
@@ -371,3 +427,20 @@ class PlaylistsPanel(PanelContainer):
         )
         dialog.connect("response", lambda d, r: d.destroy())
         dialog.show()
+
+    def _create_playlist(self, button):
+        """Create a new playlist from the name entry."""
+        name = self.name_entry.get_text().strip()
+        if not name:
+            self._show_message("Introduce un nome para a playlist", "error")
+            return
+
+        try:
+            from radio_automator.core.database import create_playlist
+            create_playlist(name)
+            self.name_entry.set_text("")
+            self._refresh_playlists()
+            self._show_message(f"Playlist '{name}' creada correctamente", "success")
+        except Exception as e:
+            self._show_message(f"Erro ao crear playlist: {e}", "error")
+

@@ -123,7 +123,7 @@ class EventBlock(Gtk.Box):
             border: {border_width}px solid {border_color};
             border-radius: 4px;
             padding: 2px;
-            cursor: pointer;
+            
         }}
         .event-block-{id(self)}:hover {{
             background-color: rgba(255, 255, 255, 0.1);
@@ -145,6 +145,37 @@ class EventBlock(Gtk.Box):
 # Columna de dia del grid
 # ═══════════════════════════════════════
 
+class PositionedFixed(Gtk.Fixed):
+    """Gtk.Fixed con reposicionamento automatico (GTK 4.6+)."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._blocks = []
+        self._last_size = None
+
+    def add_event_block(self, block, grid_event):
+        self.put(block, 0, 0)
+        self._blocks.append((block, grid_event))
+
+    def do_size_allocate(self, allocation):
+        w = allocation.width
+        h = allocation.height
+        super().do_size_allocate(allocation)
+        if h <= 1 or w <= 1:
+            return
+        if self._last_size == (w, h):
+            return
+        self._last_size = (w, h)
+        first = self.get_first_child()
+        if first:
+            first.set_size_request(w, h)
+        for block, ge in self._blocks:
+            y = int((ge.start_minutes / (24 * 60)) * h)
+            bh = max(28, int((ge.duration_minutes / (24 * 60)) * h))
+            block.set_size_request(w - 4, bh)
+            self.move(block, 2, y)
+
+
 class DayColumn(Gtk.Box):
     """Columna vertical para un dia de la semana."""
 
@@ -156,31 +187,18 @@ class DayColumn(Gtk.Box):
         self._events = events
         self._on_edit_event = on_edit_event
 
-        # Contenedor con overlay: grid lines + event blocks
-        self._overlay = Gtk.Overlay()
-        self._overlay.set_vexpand(True)
-        self.append(self._overlay)
+        self._fixed = PositionedFixed()
+        self._fixed.set_vexpand(True)
+        self._fixed.set_hexpand(True)
+        self._fixed.set_overflow(Gtk.Overflow.VISIBLE)
+        self.append(self._fixed)
 
-        # Grid de fondo (lineas horarias)
         grid_widget = self._create_hour_grid()
-        self._overlay.set_child(grid_widget)
+        self._fixed.put(grid_widget, 0, 0)
 
-        # Posicionar bloques de eventos
         for ge in sorted(events, key=lambda e: e.start_minutes):
             block = EventBlock(ge, on_edit=on_edit_event)
-            self._overlay.add_overlay(block)
-
-            # Posicionar: top_ratio basado en hora de inicio
-            top_ratio = ge.start_minutes / (24 * 60)
-            h_ratio = ge.duration_minutes / (24 * 60)
-
-            self._overlay.set_child_position(
-                block,
-                0.0,  # x (hexpand)
-                top_ratio,  # y
-                1.0,  # width (hexpand)
-                h_ratio,  # height
-            )
+            self._fixed.add_event_block(block, ge)
 
     def _create_hour_grid(self) -> Gtk.DrawingArea:
         """Crear el grid de fondo con lineas horarias."""
@@ -226,12 +244,13 @@ class DayColumn(Gtk.Box):
 class ParrillaPanel(PanelContainer):
     """Panel de la parrilla semanal (interfaz tipo Google Calendar)."""
 
-    def __init__(self):
+    def __init__(self, events_panel=None):
         super().__init__(
             title="Parrilla Semanal",
             subtitle="Programacion semanal de la emisora",
             show_add=True,
         )
+        self._events_panel = events_panel
 
         self._service = get_parrilla_service()
         self._week_offset = 0
@@ -388,7 +407,7 @@ class ParrillaPanel(PanelContainer):
 
         # Columna de horas (vaciamos el header, solo label)
         hour_col = Gtk.Box()
-        hour_col.set_size_request(50, -1)
+        hour_col.set_size_request(60, -1)
         hour_label = Gtk.Label(label="")
         hour_label.add_css_class("ra-label-dim")
         hour_col.append(hour_label)
@@ -441,7 +460,7 @@ class ParrillaPanel(PanelContainer):
     def _create_hour_labels(self) -> Gtk.Box:
         """Crear la columna con etiquetas de hora."""
         col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        col.set_size_request(50, -1)
+        col.set_size_request(60, -1)
 
         # We need enough height to space labels correctly
         # Use a DrawingArea for precise control
@@ -452,7 +471,7 @@ class ParrillaPanel(PanelContainer):
         def on_draw(drawing_area, cr, width, height):
             cr.set_source_rgb(0.43, 0.43, 0.43)  # #707070
             cr.select_font_face("sans-serif", 0, 0)
-            cr.set_font_size(8)
+            cr.set_font_size(10)
 
             for h in range(HOUR_START, HOUR_END):
                 y = (h / 24.0) * height
@@ -480,9 +499,10 @@ class ParrillaPanel(PanelContainer):
     # ── Acciones ──
 
     def _on_create_event(self, _btn):
-        """Abrir el panel de eventos para crear uno nuevo."""
-        # Navegar al panel de eventos (se hara via callback si se integra)
-        print("[Parrilla] Crear nuevo evento -> navegar a Eventos")
+        """Abrir dialogo para crear un novo evento."""
+        if self._events_panel:
+            self._events_panel._show_create_dialog()
+            self.refresh()
 
     def _on_edit_event(self, grid_event: GridEvent):
         """Editar un evento del grid."""
@@ -495,36 +515,38 @@ class ParrillaPanel(PanelContainer):
             session.close()
 
     def _show_event_details(self, event: RadioEvent, ge: GridEvent):
-        """Mostrar dialogo con detalles del evento."""
-        dialog = Gtk.MessageDialog(
+        """Mostrar dialogo con detalles do evento."""
+        dialog = Gtk.Window(
             transient_for=self.get_root() if self.get_root() else None,
             modal=True,
-            message_type=Gtk.MessageType.INFO,
-            buttons=Gtk.ButtonsType.OK_CANCEL,
             title=ge.name,
+            default_width=400,
+            default_height=350,
         )
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         box.set_margin_top(12)
         box.set_margin_start(16)
         box.set_margin_end(16)
+        box.set_margin_bottom(12)
+
+        tipo_stream = "📡 Streaming"
+        tipo_normal = "🎵 Normal"
 
         info_lines = [
             f"Evento: {ge.name}",
             f"Horario: {ParrillaService.format_time_range(ge.start_time, ge.end_time)}",
             f"Dia: {DAY_NAMES_SHORT[ge.day_index]}",
-            f"Tipo: {'📡 Streaming' if ge.is_streaming else '🎵 Normal'}",
+            f"Tipo: {tipo_stream if ge.is_streaming else tipo_normal}",
         ]
 
         if ge.playlist_name:
             info_lines.append(f"Playlist: {ge.playlist_name}")
         if ge.streaming_url:
             info_lines.append(f"URL: {ge.streaming_url}")
-
         if ge.is_now_playing:
             info_lines.append("")
             info_lines.append("● ESTE EVENTO ESTA EN VIVO")
-
         if ge.has_conflict:
             info_lines.append("")
             info_lines.append("⚠ HAY CONFLICTOS CON OTROS EVENTOS")
@@ -535,9 +557,34 @@ class ParrillaPanel(PanelContainer):
         info_label.add_css_class("ra-label")
         box.append(info_label)
 
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_box.set_halign(Gtk.Align.END)
+        btn_box.set_margin_top(8)
+
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        btn_box.append(spacer)
+
+        if self._events_panel:
+            edit_btn = Gtk.Button(label="Editar")
+            edit_btn.add_css_class("ra-button")
+            edit_btn.connect("clicked", lambda b: self._open_edit_event(event, dialog))
+            btn_box.append(edit_btn)
+
+        close_btn = Gtk.Button(label="Pechar")
+        close_btn.add_css_class("ra-button-primary")
+        close_btn.connect("clicked", lambda b: dialog.destroy())
+        btn_box.append(close_btn)
+
         dialog.set_child(box)
-        dialog.connect("response", lambda d, r: d.destroy())
         dialog.show()
+
+    def _open_edit_event(self, event, details_dialog):
+        """Abrir dialogo de edicion do evento."""
+        details_dialog.destroy()
+        if self._events_panel:
+            self._events_panel._show_create_dialog(edit_event=event)
+            self.refresh()
 
     def _toggle_auto_scheduler(self, _btn):
         """Activar/desactivar el motor de automatizacion."""

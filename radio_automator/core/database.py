@@ -76,12 +76,10 @@ def reset_engine():
 
 
 # Propiedades de conveniencia para compatibilidad con el resto del codigo
-@property
 def DATA_DIR() -> Path:
     return _get_data_dir()
 
 
-@property
 def DB_PATH() -> Path:
     return _get_data_dir() / "radio_automator.db"
 

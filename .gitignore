@@ -46,3 +46,4 @@ logs/
 
 # Datos de la aplicación (se crean en runtime)
 # No versionar la base de datos ni los archivos descargados
+.venv/

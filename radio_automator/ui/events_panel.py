@@ -153,13 +153,14 @@ class EventsPanel(PanelContainer):
         is_edit = edit_event is not None
         title = f"Editar: {edit_event.name}" if is_edit else "Nuevo Evento"
 
-        dialog = Gtk.MessageDialog(
+        dialog = Gtk.Window(
             transient_for=self.get_root() if self.get_root() else None,
             modal=True,
-            message_type=Gtk.MessageType.QUESTION,
-            buttons=Gtk.ButtonsType.OK_CANCEL,
             title=title,
+            default_width=500,
+            default_height=650,
         )
+        dialog.set_resizable(True)
 
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -268,7 +269,7 @@ class EventsPanel(PanelContainer):
         file_label.set_xalign(0)
         file_box.append(file_label)
         file_path_label = Gtk.Label(
-            label=edit_event.local_file_path or "(Ninguno)",
+            label=edit_event.local_file_path if is_edit else "(Ninguno)",
         )
         file_path_label.set_hexpand(True)
         file_path_label.set_xalign(0)
@@ -277,10 +278,10 @@ class EventsPanel(PanelContainer):
         browse_file_btn = Gtk.Button(label="📂")
         browse_file_btn.add_css_class("ra-button")
 
-        selected_file = {"path": edit_event.local_file_path or ""}
+        selected_file = {"path": edit_event.local_file_path if is_edit else ""}
 
         def on_file_browse(btn):
-            dlg = Gtk.FileChooserNative(
+            dlg = Gtk.FileChooserDialog(
                 title="Seleccionar archivo de audio",
                 action=Gtk.FileChooserAction.OPEN,
                 transient_for=self.get_root() if self.get_root() else None,
@@ -293,13 +294,16 @@ class EventsPanel(PanelContainer):
 
             def on_resp(d, r):
                 if r == Gtk.ResponseType.ACCEPT:
-                    f = d.get_file()
-                    if f:
-                        selected_file["path"] = f.get_path()
-                        file_path_label.set_label(f.get_path())
+                    gfile = d.get_file()
+                    if gfile:
+                        selected_file["path"] = gfile.get_path()
+                        file_path_label.set_label(gfile.get_path())
                 d.destroy()
 
             dlg.connect("response", on_resp)
+            dlg.add_button("Cancelar", Gtk.ResponseType.CANCEL)
+            dlg.add_button("Seleccionar", Gtk.ResponseType.OK)
+            dlg.set_default_response(Gtk.ResponseType.OK)
             dlg.show()
 
         browse_file_btn.connect("clicked", on_file_browse)
@@ -313,7 +317,7 @@ class EventsPanel(PanelContainer):
         folder_label.set_xalign(0)
         folder_box.append(folder_label)
         folder_path_label = Gtk.Label(
-            label=edit_event.local_folder_path or "(Ninguna)",
+            label=edit_event.local_folder_path if is_edit else "(Ninguna)",
         )
         folder_path_label.set_hexpand(True)
         folder_path_label.set_xalign(0)
@@ -322,10 +326,10 @@ class EventsPanel(PanelContainer):
         browse_folder_btn = Gtk.Button(label="📂")
         browse_folder_btn.add_css_class("ra-button")
 
-        selected_folder = {"path": edit_event.local_folder_path or ""}
+        selected_folder = {"path": edit_event.local_folder_path if is_edit else ""}
 
         def on_folder_browse(btn):
-            dlg = Gtk.FileChooserNative(
+            dlg = Gtk.FileChooserDialog(
                 title="Seleccionar carpeta",
                 action=Gtk.FileChooserAction.SELECT_FOLDER,
                 transient_for=self.get_root() if self.get_root() else None,
@@ -340,6 +344,9 @@ class EventsPanel(PanelContainer):
                 d.destroy()
 
             dlg.connect("response", on_resp)
+            dlg.add_button("Cancelar", Gtk.ResponseType.CANCEL)
+            dlg.add_button("Seleccionar", Gtk.ResponseType.OK)
+            dlg.set_default_response(Gtk.ResponseType.OK)
             dlg.show()
 
         browse_folder_btn.connect("clicked", on_folder_browse)
@@ -387,6 +394,21 @@ class EventsPanel(PanelContainer):
             repeat_combo.set_selected(idx)
 
         box.append(repeat_box)
+
+        # Botons
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_box.set_halign(Gtk.Align.END)
+        btn_box.set_margin_top(12)
+
+        cancel_btn = Gtk.Button(label="Cancelar")
+        cancel_btn.add_css_class("ra-button")
+
+        save_btn = Gtk.Button(label="Gardar")
+        save_btn.add_css_class("ra-button-suggested")
+
+        btn_box.append(cancel_btn)
+        btn_box.append(save_btn)
+        box.append(btn_box)
 
         scroll.set_child(box)
         dialog.set_child(scroll)
@@ -466,34 +488,68 @@ class EventsPanel(PanelContainer):
                     self._show_error(f"Error al guardar evento: {e}")
             dialog.destroy()
 
-        dialog.connect("response", on_response)
+        save_btn.connect("clicked", lambda b: on_response(dialog, Gtk.ResponseType.OK))
+        cancel_btn.connect("clicked", lambda b: dialog.destroy())
+        dialog.connect("close-request", lambda w: w.destroy())
         dialog.show()
 
     def _show_edit_dialog(self, event: RadioEvent):
         self._show_create_dialog(edit_event=event)
 
     def _show_delete_confirm(self, event: RadioEvent):
-        dialog = Gtk.MessageDialog(
+        """Pedir confirmacion para eliminar un evento."""
+        dialog = Gtk.Window(
             transient_for=self.get_root() if self.get_root() else None,
             modal=True,
-            message_type=Gtk.MessageType.WARNING,
-            buttons=Gtk.ButtonsType.YES_NO,
             title="Eliminar Evento",
-            text=f"¿Seguro que quieres eliminar el evento \"{event.name}\"?",
+            default_width=400,
+            default_height=150,
         )
 
-        def on_response(dialog, response_id):
-            if response_id == Gtk.ResponseType.YES:
-                try:
-                    self._session.delete(event)
-                    self._session.commit()
-                    self.refresh()
-                except Exception as e:
-                    self._session.rollback()
-                    self._show_error(f"Error al eliminar: {e}")
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_top(16)
+        box.set_margin_start(16)
+        box.set_margin_end(16)
+        box.set_margin_bottom(16)
+
+        question = Gtk.Label(label=f"¿Seguro que queres eliminar o evento \"{event.name}\"?")
+        question.set_xalign(0)
+        question.add_css_class("ra-label")
+        box.append(question)
+
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_box.set_halign(Gtk.Align.END)
+        btn_box.set_margin_top(8)
+
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        btn_box.append(spacer)
+
+        cancel_btn = Gtk.Button(label="Cancelar")
+        cancel_btn.add_css_class("ra-button")
+        cancel_btn.connect("clicked", lambda b: dialog.destroy())
+        btn_box.append(cancel_btn)
+
+        delete_btn = Gtk.Button(label="Eliminar")
+        delete_btn.add_css_class("ra-button")
+        # Color rojo
+        delete_btn.add_css_class("destructive-action")
+
+        def do_delete():
+            try:
+                self._session.delete(event)
+                self._session.commit()
+                self.refresh()
+            except Exception as e:
+                self._session.rollback()
+                self._show_error(f"Error ao eliminar: {e}")
             dialog.destroy()
 
-        dialog.connect("response", on_response)
+        delete_btn.connect("clicked", lambda b: do_delete())
+        btn_box.append(delete_btn)
+        box.append(btn_box)
+
+        dialog.set_child(box)
         dialog.show()
 
     def _show_error(self, message: str):

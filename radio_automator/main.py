@@ -160,12 +160,12 @@ class RadioAutomator(Gtk.Application):
         self._stack.set_vexpand(True)
 
         # Crear todos los paneles
-        self._panels["parrilla"] = ParrillaPanel()
+        self._panels["eventos"] = EventsPanel()
+        self._panels["parrilla"] = ParrillaPanel(events_panel=self._panels["eventos"])
         self._panels["playlists"] = PlaylistsPanel(
             on_playlist_selected=self._on_playlist_selected
         )
         self._panels["continuidad"] = ContinuidadPanel()
-        self._panels["eventos"] = EventsPanel()
         self._panels["podcasts"] = PodcastsPanel()
         self._panels["config"] = ConfigPanel()
 
@@ -207,7 +207,6 @@ class RadioAutomator(Gtk.Application):
         engine = get_audio_engine()
         engine.set_callbacks(
             on_state_changed=self._on_engine_state_changed,
-            on_position_changed=self._on_engine_position_changed,
             on_track_finished=None,
             on_vu_changed=None,
             on_error=self._on_engine_error,
@@ -442,7 +441,7 @@ class RadioAutomator(Gtk.Application):
         self.set_accels_for_action('app.nav.eventos', ['<Control>4'])
         self.set_accels_for_action('app.nav.podcasts', ['<Control>5'])
         self.set_accels_for_action('app.nav.config', ['<Control>6'])
-        self.set_accels_for_action('app.transport.play-pause', ['space'])
+        self.set_accels_for_action('app.transport.play-pause', ['<ctrl>space'])
         self.set_accels_for_action('app.transport.next', ['<Control>Right'])
         self.set_accels_for_action('app.transport.prev', ['<Control>Left'])
         self.set_accels_for_action('app.transport.stop', ['<Control>s'])
