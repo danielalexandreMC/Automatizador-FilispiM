@@ -13,14 +13,6 @@ from radio_automator.services.podcast_service import (
     PodcastError, FeedNotFoundError, FeedLimitError
 )
 
-# Función auxiliar (engadir despois dos imports)
-def _clear_box(box):
-    """Eliminar todos os fillows dun Box."""
-    child = box.get_first_child()
-    while child is not None:
-        next_child = child.get_next_sibling()
-        box.remove(child)
-        child = next_child
 
 # ═══════════════════════════════════════
 # Fila de feed
@@ -166,7 +158,9 @@ class EpisodesView(Gtk.Box):
         self.append(scroll)
 
     def refresh(self):
-        _clear_box(self._list)
+        # GTK 4.6
+        while self._list.get_first_child():
+            self._list.remove(self._list.get_first_child())
         episodes = self._service.get_episodes(self._dto.id)
 
         if not episodes:
@@ -309,7 +303,9 @@ class PodcastsPanel(PanelContainer):
             pass
 
     def _refresh_feeds(self):
-        _clear_box(self._feeds_list)
+        # GTK 4.6
+        while self._feeds_list.get_first_child():
+            self._feeds_list.remove(self._feeds_list.get_first_child())
         feeds = self._service.get_all_feeds()
 
         if not feeds:
@@ -333,7 +329,9 @@ class PodcastsPanel(PanelContainer):
     def _show_episodes(self, dto: FeedDTO):
         """Mostrar la vista de episodios de un feed."""
         # Limpiar contenido actual
-        _clear_box(self.content)
+        # GTK 4.6
+        while self.content.get_first_child():
+            self.content.remove(self.content.get_first_child())
 
         # Crear vista de episodios
         view = EpisodesView(dto, on_back=self._back_to_feeds)
@@ -345,7 +343,9 @@ class PodcastsPanel(PanelContainer):
     def _back_to_feeds(self):
         """Volver a la vista de feeds."""
         self._current_view = "feeds"
-        _clear_box(self.content)
+        # GTK 4.6
+        while self.content.get_first_child():
+            self.content.remove(self.content.get_first_child())
 
         # Restaurar toolbar
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -444,12 +444,12 @@ class PodcastsPanel(PanelContainer):
         is_edit = edit_dto is not None
         title = f"Editar: {edit_dto.name}" if is_edit else "Nuevo Feed RSS"
 
-        dialog = Gtk.Window(
+        dialog = Gtk.MessageDialog(
             transient_for=self.get_root() if self.get_root() else None,
             modal=True,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.OK_CANCEL,
             title=title,
-            default_width=500,
-            default_height=420,
         )
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -627,85 +627,49 @@ class PodcastsPanel(PanelContainer):
         self._show_add_dialog(edit_dto=dto)
 
     def _show_delete_confirm(self, dto: FeedDTO):
-        dialog = Gtk.Window(
+        dialog = Gtk.MessageDialog(
             transient_for=self.get_root() if self.get_root() else None,
             modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.YES_NO,
             title="Eliminar Feed",
-            default_width=400,
-            default_height=180,
         )
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.set_margin_top(16)
-        box.set_margin_bottom(16)
+        box.set_margin_top(12)
+        box.set_margin_bottom(12)
         box.set_margin_start(16)
         box.set_margin_end(16)
 
         msg = Gtk.Label(
-            label=f"¿Seguro que queres eliminar \"{dto.name}\"?\n"
-                  f"Eliminaranse os {dto.episode_count} episodio(s) descargados\n"
-                  f"e os seus ficheiros locais."
+            label=f"¿Seguro que quieres eliminar \"{dto.name}\"?\n"
+                  f"Se eliminaran los {dto.episode_count} episodio(s) descargados\n"
+                  f"y sus archivos locales."
         )
         msg.set_xalign(0)
         box.append(msg)
+        dialog.set_child(box)
 
-        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        btn_box.set_halign(Gtk.Align.END)
-        btn_box.set_margin_top(12)
-
-        spacer = Gtk.Box()
-        spacer.set_hexpand(True)
-        btn_box.append(spacer)
-
-        cancel_btn = Gtk.Button(label="Cancelar")
-        cancel_btn.add_css_class("ra-button")
-        cancel_btn.connect("clicked", lambda b: dialog.destroy())
-        btn_box.append(cancel_btn)
-
-        delete_btn = Gtk.Button(label="Eliminar")
-        delete_btn.add_css_class("destructive-action")
-
-        def do_delete():
-            try:
-                self._service.delete_feed(dto.id)
-                self.refresh()
-            except Exception as e:
-                self._show_error(f"Error ao eliminar: {e}")
+        def on_response(dialog, response_id):
+            if response_id == Gtk.ResponseType.YES:
+                try:
+                    self._service.delete_feed(dto.id)
+                    self.refresh()
+                except Exception as e:
+                    self._show_error(f"Error al eliminar: {e}")
             dialog.destroy()
 
-        delete_btn.connect("clicked", lambda b: do_delete())
-        btn_box.append(delete_btn)
-        box.append(btn_box)
-
-        dialog.set_child(box)
+        dialog.connect("response", on_response)
         dialog.show()
 
     def _show_error(self, message: str):
-        dialog = Gtk.Window(
+        dialog = Gtk.MessageDialog(
             transient_for=self.get_root() if self.get_root() else None,
             modal=True,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.CLOSE,
             title="Error",
-            default_width=400,
-            default_height=150,
+            text=message,
         )
-
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        box.set_margin_top(16)
-        box.set_margin_start(16)
-        box.set_margin_end(16)
-        box.set_margin_bottom(16)
-
-        msg = Gtk.Label(label=message)
-        msg.set_xalign(0)
-        box.append(msg)
-
-        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        btn_box.set_halign(Gtk.Align.END)
-        close_btn = Gtk.Button(label="Pechar")
-        close_btn.add_css_class("ra-button-primary")
-        close_btn.connect("clicked", lambda b: dialog.destroy())
-        btn_box.append(close_btn)
-        box.append(btn_box)
-
-        dialog.set_child(box)
+        dialog.connect("response", lambda d, r: d.destroy())
         dialog.show()

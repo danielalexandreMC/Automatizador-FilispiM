@@ -36,6 +36,13 @@ HOUR_END = 24   # Hora de fin del grid
 SLOT_HEIGHT_MINUTES = 30  # Cada slot representa 30 min
 
 
+def format_time_range(start: str, end: str | None) -> str:
+    """Formatear rango horario para mostrar (funcion modulo)."""
+    if end:
+        return f"{start} - {end}"
+    return f"{start} (sin fin)"
+
+
 # ═══════════════════════════════════════
 # DTOs
 # ═══════════════════════════════════════
@@ -445,7 +452,12 @@ class ParrillaService:
 
     def _detect_conflicts(self,
                           days: list[list[GridEvent]]) -> list[ConflictInfo]:
-        """Detectar conflictos en datos del grid ya organizados."""
+        """Detectar conflictos en datos del grid ya organizados.
+
+        Un conflito existe SOO cando dous eventos do mesmo dia teñen
+        solapamento REAL de horas (start/end). Os eventos sen hora de fin
+        (end_time=None) NON se consideran para conflitos.
+        """
         conflicts = []
 
         for day_idx, day_events in enumerate(days):
@@ -454,12 +466,18 @@ class ParrillaService:
                     ev1 = day_events[i]
                     ev2 = day_events[j]
 
+                    # Se algun evento non ten hora de fin, non se considera conflito
+                    # (o evento fica aberto ata que remate o contido)
+                    if not ev1.end_time or not ev2.end_time:
+                        continue
+
                     end1 = ev1.start_minutes + ev1.duration_minutes
                     end2 = ev2.start_minutes + ev2.duration_minutes
 
                     overlap_start = max(ev1.start_minutes, ev2.start_minutes)
                     overlap_end = min(end1, end2)
 
+                    # Hai conflito so se solapan en tempo (non se tocan nos bordes)
                     if overlap_start < overlap_end:
                         ev1.has_conflict = True
                         ev2.has_conflict = True

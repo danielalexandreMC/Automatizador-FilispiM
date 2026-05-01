@@ -426,6 +426,13 @@ class PodcastService:
 
                 result["new"] += 1
 
+                # Non descargar se xa chegamos ao max_episodes
+                if feed.max_episodes is not None:
+                    total_after = len(existing_urls) + result["downloaded"]
+                    if total_after >= feed.max_episodes:
+                        result["skipped"] += 1
+                        continue
+
                 # Descargar
                 try:
                     local_path = self._download_episode(
@@ -453,9 +460,9 @@ class PodcastService:
                     result["errors"] += 1
                     print(f"[PodcastService] Error descargando {audio_url}: {e}")
 
-            # Modo replace: eliminar episodios excedentes
-            if feed.mode == "replace" and feed.max_episodes is not None:
-                self._apply_replace_mode(feed_id, feed.max_episodes, session)
+            # Eliminar episodios excedentes (ambos modos)
+            if feed.max_episodes is not None:
+                self._trim_excess_episodes(feed_id, feed.max_episodes, session)
 
             # Actualizar ultima comprobacion
             feed.last_check_at = datetime.now(timezone.utc)
@@ -694,7 +701,7 @@ class PodcastService:
 
         return None
 
-    def _apply_replace_mode(self, feed_id: int, max_episodes: int,
+    def _trim_excess_episodes(self, feed_id: int, max_episodes: int,
                             session: Session):
         """En modo replace, eliminar los episodios mas antiguos que excedan el limite."""
         episodes = (

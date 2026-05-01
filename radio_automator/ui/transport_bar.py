@@ -1,8 +1,7 @@
-from pathlib import Path
 """
 Barra de transporte (TransportBar).
-Controles de reproduccion, barra de progreso, VU meters, e info de pista.
-Se ubica en la parte inferior de la ventana, encima de la StatusBar.
+Controles de reproduccion, VU meters, e info de pista.
+Se ubica en la parte superior de la ventana, debajo de la HeaderBar.
 """
 
 import gi
@@ -13,6 +12,8 @@ from radio_automator.services.audio_engine import (
     get_audio_engine, PlaybackState, TrackInfo, VUMeterData
 )
 from radio_automator.services.play_queue import get_play_queue
+from radio_automator.services.automation_engine import get_automation_engine, PlaybackSource
+from radio_automator.core.event_bus import get_event_bus, Event
 
 
 # ═══════════════════════════════════════
@@ -22,7 +23,7 @@ from radio_automator.services.play_queue import get_play_queue
 class TransportBar(Gtk.Box):
     """
     Barra de controles de reproduccion.
-    Contiene: VU meters | controles (prev/play/next) | info + progreso | volumen
+    Contiene: VU meters | controles (prev/play/next) | info | volumen
     """
 
     def __init__(self):
@@ -31,11 +32,16 @@ class TransportBar(Gtk.Box):
         self._engine = get_audio_engine()
         self._queue = get_play_queue()
         self._update_pending = False
+        self._show_remaining = False  # Toggle: false=elapsed/total, true=remaining
+
+        self._parrilla_event_name: str | None = None  # Nome do evento de parrilla actual
+        self._last_playing_path: str | None = None  # Para detectar cambios de pista
+        self._prev_state = None  # Estado anterior de reproduccion
 
         self._build_controls()
-        self._build_progress()
         self._connect_engine()
         self._connect_queue()
+        self._connect_event_bus()
 
     # ── Construccion de UI ──
 
@@ -48,14 +54,31 @@ class TransportBar(Gtk.Box):
         main_row.set_margin_bottom(2)
         self.append(main_row)
 
-        # ── VU Meters ──
-        vu_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
-        vu_box.set_size_request(100, 28)
+        # ── VU Meters (estilo LED segmentado, apilados verticalmente) ──
+        vu_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
 
+        # Canal Esquerdo (E) - arriba
+        vu_left_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        lbl_e = Gtk.Label(label="E")
+        lbl_e.add_css_class("ra-label-dim")
+        lbl_e.set_valign(Gtk.Align.CENTER)
+        lbl_e.set_size_request(10, -1)
+        vu_left_box.append(lbl_e)
         self._vu_left = self._create_vu_bar("L")
+        vu_left_box.append(self._vu_left)
+
+        # Canal Dereito (D) - abaixo
+        vu_right_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        lbl_d = Gtk.Label(label="D")
+        lbl_d.add_css_class("ra-label-dim")
+        lbl_d.set_valign(Gtk.Align.CENTER)
+        lbl_d.set_size_request(10, -1)
+        vu_right_box.append(lbl_d)
         self._vu_right = self._create_vu_bar("R")
-        vu_box.append(self._vu_left)
-        vu_box.append(self._vu_right)
+        vu_right_box.append(self._vu_right)
+
+        vu_box.append(vu_left_box)
+        vu_box.append(vu_right_box)
 
         main_row.append(vu_box)
 
@@ -109,6 +132,39 @@ class TransportBar(Gtk.Box):
         sep2 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
         main_row.append(sep2)
 
+        # ── Display de tempo (clicábel: elapsed/total <-> restante) ──
+        time_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        time_box.set_valign(Gtk.Align.CENTER)
+        time_box.set_margin_start(4)
+        time_box.set_margin_end(4)
+
+        self._time_label = Gtk.Label(label="0:00 / 0:00")
+        self._time_label.set_xalign(0.5)
+        self._time_label.set_name("track-time")
+        self._time_label.add_css_class("ra-time-display")
+        # Cursor manina para indicar que é clicábel (Gdk en GTK 4.6)
+        try:
+            from gi.repository import Gdk
+            display = Gdk.Display.get_default()
+            if display:
+                cursor = Gdk.Cursor.new_from_name(display, "pointer")
+                self._time_label.set_cursor(cursor)
+        except Exception:
+            pass  # GTK 4.6 pode non soportar cursor por nome
+
+        # GestureClick para toggle elapsed/remaining
+        click_gesture = Gtk.GestureClick()
+        click_gesture.set_button(1)
+        click_gesture.connect("released", self._on_time_label_clicked)
+        self._time_label.add_controller(click_gesture)
+
+        time_box.append(self._time_label)
+        main_row.append(time_box)
+
+        # Separador
+        sep2b = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        main_row.append(sep2b)
+
         # ── Info de pista ──
         info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         info_box.set_hexpand(True)
@@ -130,28 +186,6 @@ class TransportBar(Gtk.Box):
         info_box.append(self._track_artist)
 
         main_row.append(info_box)
-
-        # ── Progreso tiempo ──
-        time_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        time_box.set_valign(Gtk.Align.CENTER)
-
-        self._time_pos = Gtk.Label(label="0:00")
-        self._time_pos.set_xalign(1)
-        self._time_pos.add_css_class("ra-label-dim")
-        self._time_pos.set_width_chars(5)
-        time_box.append(self._time_pos)
-
-        self._time_sep = Gtk.Label(label="/")
-        self._time_sep.add_css_class("ra-label-dim")
-        time_box.append(self._time_sep)
-
-        self._time_dur = Gtk.Label(label="0:00")
-        self._time_dur.set_xalign(0)
-        self._time_dur.add_css_class("ra-label-dim")
-        self._time_dur.set_width_chars(5)
-        time_box.append(self._time_dur)
-
-        main_row.append(time_box)
 
         # Separador
         sep3 = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
@@ -177,89 +211,109 @@ class TransportBar(Gtk.Box):
         self._volume_scale.add_css_class("ra-volume-scale")
         self._volume_scale.set_size_request(80, -1)
         self._volume_scale.connect("value-changed", self._on_volume_changed)
-        vol_gesture = Gtk.GestureClick()
-        vol_gesture.set_button(1)
-        vol_gesture.connect("pressed", lambda g, n, x, y: self._on_volume_press())
-        vol_gesture.connect("released", lambda g, n, x, y: self._on_volume_release())
-        self._volume_scale.add_controller(vol_gesture)
         vol_box.append(self._volume_scale)
 
         main_row.append(vol_box)
 
-    def _build_progress(self):
-        """Barra de progreso de la pista."""
-        progress_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        progress_box.set_margin_start(8)
-        progress_box.set_margin_end(8)
-        progress_box.set_margin_bottom(4)
-
-        self._progress_scale = Gtk.Scale.new_with_range(
-            Gtk.Orientation.HORIZONTAL, 0.0, 100.0, 1.0
-        )
-        self._progress_scale.set_value(0.0)
-        self._progress_scale.set_draw_value(False)
-        self._progress_scale.set_show_fill_level(True)
-        self._progress_scale.add_css_class("ra-progress-scale")
-        self._progress_scale.set_hexpand(True)
-        self._progress_scale.set_sensitive(False)
-        self._progress_scale.connect("value-changed", self._on_progress_changed)
-        prog_gesture = Gtk.GestureClick()
-        prog_gesture.set_button(1)
-        prog_gesture.connect("pressed", lambda g, n, x, y: self._on_progress_press())
-        prog_gesture.connect("released", lambda g, n, x, y: self._on_progress_release())
-        self._progress_scale.add_controller(prog_gesture)
-        self._progress_scale._seeking = False  # type: ignore[attr-defined]
-
-        progress_box.append(self._progress_scale)
-        self.append(progress_box)
-
     def _create_vu_bar(self, channel: str) -> Gtk.DrawingArea:
-        """Crear un indicador de nivel (VU bar) para un canal."""
+        """Crear un indicador de nivel (VU bar) estilo LED segmentado."""
         da = Gtk.DrawingArea()
-        da.set_content_width(45)
-        da.set_content_height(26)
+        da.set_content_width(96)
+        da.set_content_height(12)
         da.set_name(f"vu-{channel}")
         da.add_css_class("ra-vu-bar")
-        da._level = 0.0  # type: ignore[attr-defined]
-        da._peak = 0.0   # type: ignore[attr-defined]
+        da._level = 0.0          # type: ignore[attr-defined]
+        da._peak = 0.0           # type: ignore[attr-defined]
+        da._peak_counter = 0     # type: ignore[attr-defined]
+
+        NUM_SEGMENTS = 10
+        GAP = 2
+        MARGIN = 2
+
+        def _seg_color(seg_index, bright=True):
+            """Cor para un segmento segundo a sua posicion."""
+            ratio = seg_index / NUM_SEGMENTS
+            if ratio < 0.60:
+                return (0.1, 0.85, 0.3) if bright else (0.06, 0.16, 0.08)
+            elif ratio < 0.85:
+                return (1.0, 0.80, 0.0) if bright else (0.18, 0.14, 0.0)
+            else:
+                return (0.95, 0.15, 0.15) if bright else (0.18, 0.04, 0.04)
 
         def on_draw(drawing_area, cr, width, height):
             level = drawing_area._level  # type: ignore[attr-defined]
             peak = drawing_area._peak    # type: ignore[attr-defined]
 
-            # Fondo
-            cr.set_source_rgb(0.13, 0.13, 0.13)
+            # Fondo negro
+            cr.set_source_rgb(0.06, 0.06, 0.06)
             cr.rectangle(0, 0, width, height)
             cr.fill()
 
-            # Nivel (verde -> amarillo -> rojo)
-            bar_width = max(0, level * width)
-            for x in range(int(bar_width)):
-                ratio = x / max(1, width)
-                if ratio < 0.6:
-                    # Verde
-                    cr.set_source_rgb(0.18, 0.8, 0.44)
-                elif ratio < 0.85:
-                    # Amarillo
-                    cr.set_source_rgb(1.0, 0.78, 0.0)
-                else:
-                    # Rojo
-                    cr.set_source_rgb(0.9, 0.2, 0.2)
-                cr.rectangle(x, 2, 1, height - 4)
+            # Bordo sutil
+            cr.set_source_rgb(0.18, 0.18, 0.18)
+            cr.set_line_width(1)
+            cr.rectangle(0.5, 0.5, width - 1, height - 1)
+            cr.stroke()
+
+            # Calcular dimensons dos segmentos cadrados
+            avail_w = width - 2 * MARGIN
+            avail_h = height - 2 * MARGIN
+            seg_size = max(1, (avail_w - (NUM_SEGMENTS - 1) * GAP) / NUM_SEGMENTS)
+            # Limitar altura para manter aspecto cadrado
+            if seg_size > avail_h:
+                seg_size = avail_h
+            bar_h = seg_size
+            bar_w = seg_size
+            # Centrar verticalmente
+            bar_y = MARGIN + (avail_h - bar_h) / 2
+
+            # Numero de segmentos iluminados
+            lit = int(level * NUM_SEGMENTS)
+            lit = max(0, min(lit, NUM_SEGMENTS))
+
+            # Segmento do pico
+            peak_seg = int(peak * NUM_SEGMENTS)
+            peak_seg = max(0, min(peak_seg, NUM_SEGMENTS - 1))
+
+            # Debuxar todos os segmentos (apagados primeiro)
+            for i in range(NUM_SEGMENTS):
+                x = MARGIN + i * (bar_w + GAP)
+                r, g, b = _seg_color(i, bright=False)
+                cr.set_source_rgb(r, g, b)
+                cr.rectangle(x, bar_y, bar_w, bar_h)
                 cr.fill()
 
-            # Peak indicator
-            if peak > 0.01:
-                peak_x = max(0, min(int(peak * width), width - 2))
-                ratio = peak
-                if ratio < 0.6:
-                    cr.set_source_rgb(0.3, 1.0, 0.5)
-                elif ratio < 0.85:
-                    cr.set_source_rgb(1.0, 0.9, 0.2)
-                else:
-                    cr.set_source_rgb(1.0, 0.3, 0.3)
-                cr.rectangle(peak_x, 1, 2, height - 2)
+            # Superpoer segmentos iluminados
+            for i in range(lit):
+                x = MARGIN + i * (bar_w + GAP)
+                r, g, b = _seg_color(i, bright=True)
+                cr.set_source_rgb(r, g, b)
+                cr.rectangle(x, bar_y, bar_w, bar_h)
                 cr.fill()
+
+                # Brillo sutil (glow LED)
+                cr.set_source_rgba(r, g, b, 0.12)
+                cr.rectangle(x - 1, bar_y - 1, bar_w + 2, bar_h + 2)
+                cr.fill()
+
+            # Indicador de pico (peak hold)
+            if peak > 0.02 and peak_seg >= 0:
+                px = MARGIN + peak_seg * (bar_w + GAP)
+                ratio = peak_seg / NUM_SEGMENTS
+                if ratio < 0.60:
+                    pr, pg, pb = 0.4, 1.0, 0.6
+                elif ratio < 0.85:
+                    pr, pg, pb = 1.0, 0.95, 0.3
+                else:
+                    pr, pg, pb = 1.0, 0.4, 0.4
+
+                if peak_seg >= lit:
+                    cr.set_source_rgb(pr, pg, pb)
+                    cr.rectangle(px, bar_y, bar_w, bar_h)
+                    cr.fill()
+                    cr.set_source_rgba(pr, pg, pb, 0.2)
+                    cr.rectangle(px - 1, bar_y - 1, bar_w + 2, bar_h + 2)
+                    cr.fill()
 
         da.set_draw_func(on_draw)
         return da
@@ -284,6 +338,54 @@ class TransportBar(Gtk.Box):
             on_current_changed=self._on_queue_current_changed,
         )
 
+    def _connect_event_bus(self):
+        """Conectar a eventos do AutomationEngine via EventBus."""
+        bus = get_event_bus()
+        bus.subscribe("automation.update_title", self._on_automation_update_title)
+        bus.subscribe("automation.source_changed", self._on_automation_source_changed)
+        bus.subscribe("automation.event_ended", self._on_automation_event_ended)
+
+    def _on_automation_update_title(self, event: Event):
+        """Actualizar o display cando a automatizacion inicia un evento."""
+        def _update():
+            title = event.data.get("title", "")
+            artist = event.data.get("artist", "")
+            if title:
+                self._parrilla_event_name = title
+                self._track_title.set_label(title)
+                self._track_artist.set_label(artist)
+
+        if self._engine.is_available:
+            GLib.idle_add(_update)
+        else:
+            _update()
+
+    def _on_automation_source_changed(self, event: Event):
+        """Limpar o nome do evento cando a fonte cambia a non-Parrilla."""
+        new_source = event.data.get("new_source", "")
+        if new_source != PlaybackSource.PARRILLA.value:
+            def _update():
+                self._parrilla_event_name = None
+                self._last_playing_path = None  # Reset para detectar nova pista
+                # Limpar labels para que non mostren datos do evento anterior
+                if self._engine.state != PlaybackState.PLAYING:
+                    self._track_title.set_label("Sin reproduccion")
+                    self._track_artist.set_label("")
+            if self._engine.is_available:
+                GLib.idle_add(_update)
+            else:
+                _update()
+
+    def _on_automation_event_ended(self, event: Event):
+        """Limpar o nome do evento cando remata un evento de parrilla."""
+        def _update():
+            self._parrilla_event_name = None
+            self._last_playing_path = None
+        if self._engine.is_available:
+            GLib.idle_add(_update)
+        else:
+            _update()
+
     # ── Handlers de controles ──
 
     def _on_play_pause(self, _btn=None):
@@ -295,53 +397,85 @@ class TransportBar(Gtk.Box):
         elif engine.state == PlaybackState.PAUSED:
             engine.resume()
         else:
-            # No hay reproduccion, intentar reproducir la cola
-            if queue.is_empty:
-                try:
-                    from radio_automator.core.database import Playlist, get_session
-                    session = get_session()
-                    cont = session.query(Playlist).filter_by(is_system=True, name="Continuidad").first()
-                    if cont:
-                        count = queue.load_playlist(cont.id, session=session)
-                    else:
-                        all_pl = session.query(Playlist).all()
-                except Exception as e:
-                    import traceback
-                    traceback.print_exc()
-                    return
-
-                if queue.is_empty:
-                    return
-
-            if queue.current_item is None:
+            # Non hai reproducion: intentar a cola primeiro
+            if not queue.is_empty and queue.current_item is None:
                 queue.play_next()
 
             item = queue.current_item
             if item:
+                # Hai pistas na cola, reproducir
                 if item.is_streaming:
                     engine.play_stream(item.filepath)
                 else:
                     engine.play_file(item.filepath)
+            else:
+                # Cola baleira: iniciar automatizacion (Parrilla -> Continuidad)
+                automation = get_automation_engine()
+                if not automation.is_active:
+                    automation.start()
+                else:
+                    # Xa esta activa, forzar tick inmediato
+                    automation.tick()
 
     def _on_prev(self, _btn=None):
-        item = self._queue.play_previous()
-        if item:
-            engine = self._engine
-            if item.is_streaming:
-                engine.play_stream(item.filepath)
-            else:
-                engine.play_file(item.filepath)
+        """Ir ao comezo da pista actual."""
+        if self._engine.state == PlaybackState.PLAYING:
+            self._engine.seek(0)
 
     def _on_next(self, _btn=None):
-        item = self._queue.play_next()
-        if item:
-            engine = self._engine
-            if item.is_streaming:
-                engine.play_stream(item.filepath)
+        """Avanzar: saltar a seguinte pista.
+
+        - Se esta en Continuidad: para pista actual e reproduce seguinte directamente.
+        - Se esta nun evento de Parrilla: para evento e pasa a Continuidad.
+        - Se a automatizacion non esta activa: activala (Continuidad).
+        """
+        automation = get_automation_engine()
+        engine = self._engine
+        queue = self._queue
+
+        if not automation.is_active:
+            automation.start()
+            return
+
+        # Limpar labels inmediatamente para que non mostren datos do tema anterior
+        self._track_title.set_label("Cargando...")
+        self._track_artist.set_label("")
+        self._last_playing_path = None  # Reset para que o callback de PLAYING detecte o cambio
+        self._parrilla_event_name = None
+
+        if automation.source == PlaybackSource.CONTINUIDAD:
+            # Continuidad: parar pista actual e avanzar cola directamente
+            engine.stop()
+            next_item = queue.play_next()
+            if next_item:
+                # NON asignar _last_playing_path aqui.
+                # O callback _on_engine_state_changed(PLAYING) detectara
+                # que _last_playing_path e None e actualizara os labels.
+                if next_item.is_streaming:
+                    engine.play_stream(next_item.filepath)
+                else:
+                    engine.play_file(next_item.filepath)
             else:
-                engine.play_file(item.filepath)
+                # Cola esgotada, reiniciar Continuidad
+                automation._continuidad.item_index = 0
+                queue.clear()
+                automation._start_continuidad()
+
+        elif automation.source == PlaybackSource.PARRILLA:
+            # Parrilla: parar evento e cambiar a Continuidad
+            engine.stop()
+            queue.clear()
+            automation._current_event_id = None
+            automation._current_event_type = None
+            automation._current_folder_path = None
+            automation._event_content_finished = False
+            automation._set_source(PlaybackSource.NONE)
+            # tick() comprobara que non hai evento e iniciara Continuidad
+            automation.tick()
+
         else:
-            self._engine.stop()
+            # Outro estado (NONE etc): forzar tick
+            automation.tick()
 
     def _on_stop(self, _btn=None):
         self._engine.stop()
@@ -354,110 +488,191 @@ class TransportBar(Gtk.Box):
         self._engine.set_volume(scale.get_value())
         self._update_volume_icon()
 
-    def _on_volume_press(self):
-        pass  # El seek se maneja en release
-
-    def _on_volume_release(self):
-        pass
-
-    def _on_progress_changed(self, scale):
-        """Manejar cambio de posicion en la barra de progreso."""
-        if hasattr(scale, '_seeking') and scale._seeking:
-            return
-
-        if not scale.get_sensitive():
-            return
-
-        value = scale.get_value()
-        self._engine.seek(int(value))
-
-    def _on_progress_press(self):
-        """Iniciar seeking cuando el usuario presiona la barra."""
-        scale._seeking = True  # type: ignore[attr-defined]
-
-    def _on_progress_release(self):
-        """Finalizar seek cuando el usuario suelta la barra."""
-        scale._seeking = False  # type: ignore[attr-defined]
-        value = scale.get_value()
-        self._engine.seek(int(value))
-
     # ── Handlers de eventos del motor ──
 
     def _on_engine_state_changed(self, state: PlaybackState):
-        """Actualizar UI cuando cambia el estado del motor.
-        NOTA: Xa se chama via GLib.idle_add desde AudioEngine._safe_call,
-        polo que podemos executar directamente."""
-        if state == PlaybackState.PLAYING:
-            self._btn_play.set_icon_name("media-playback-pause-symbolic")
-            self._btn_play.set_tooltip_text("Pausar")
-            self._progress_scale.set_sensitive(True)
-        elif state == PlaybackState.PAUSED:
-            self._btn_play.set_icon_name("media-playback-start-symbolic")
-            self._btn_play.set_tooltip_text("Reanudar")
-        else:
-            self._btn_play.set_icon_name("media-playback-start-symbolic")
-            self._btn_play.set_tooltip_text("Reproducir")
-            self._progress_scale.set_sensitive(False)
-            self._progress_scale.set_value(0.0)
-            self._time_pos.set_label("0:00")
-            self._time_dur.set_label("0:00")
+        """Actualizar UI cuando cambia el estado del motor."""
+        def _update():
+            if state == PlaybackState.PLAYING:
+                self._btn_play.set_icon_name("media-playback-pause-symbolic")
+                self._btn_play.set_tooltip_text("Pausar")
 
-        # Actualizar sidebar status
-        self._update_sidebar_status(state)
+                # Detectar nova pista vs resume de pause
+                current_path = self._engine.track_info.filepath if self._engine.track_info else ""
+                if current_path and current_path != self._last_playing_path:
+                    # Nova pista: limpar datos antigos inmediatamente
+                    self._last_playing_path = current_path
+                    if not self._parrilla_event_name:
+                        # Non Parrilla (Continuidad/manual): mostrar nome do ficheiro
+                        from pathlib import Path as _P
+                        name = _P(current_path).stem if current_path else "..."
+                        self._track_title.set_label(name)
+                        self._track_artist.set_label("")
+                    else:
+                        # Parrilla: manter nome do evento, limpar subtitulo
+                        self._track_artist.set_label("")
+            elif state == PlaybackState.PAUSED:
+                self._btn_play.set_icon_name("media-playback-start-symbolic")
+                self._btn_play.set_tooltip_text("Reanudar")
+            else:
+                self._btn_play.set_icon_name("media-playback-start-symbolic")
+                self._btn_play.set_tooltip_text("Reproducir")
+                # Resetear display de tempo ao parar
+                self._time_label.set_label("0:00 / 0:00")
+
+            self._prev_state = state
+            # Actualizar sidebar status
+            self._update_sidebar_status(state)
+
+        if self._engine.is_available:
+            GLib.idle_add(_update)
+        else:
+            _update()
 
     def _on_engine_position_changed(self, info: TrackInfo):
-        """Actualizar posicion y progreso.
-        NOTA: Xa se chama via GLib.idle_add desde AudioEngine._safe_call."""
-        if hasattr(self._progress_scale, '_seeking') and self._progress_scale._seeking:
-            return
+        """Actualizar posicion e display de tempo."""
+        def _update():
+            self._update_time_display(info)
 
-        self._time_pos.set_label(info.position_str)
-        if info.duration_ms > 0:
-            self._time_dur.set_label(info.duration_str)
-            self._progress_scale.set_range(0, info.duration_ms)
-            self._progress_scale.set_value(float(info.position_ms))
+        if self._engine.is_available:
+            GLib.idle_add(_update)
+        else:
+            _update()
 
     def _on_engine_track_finished(self, info: TrackInfo):
-        """Pista terminada, avanzar en la cola."""
+        """Pista terminada, avanzar en la cola ou delegar a automatizacao."""
+        try:
+            automation = get_automation_engine()
+
+            if automation.is_active and automation.source in (
+                PlaybackSource.PARRILLA, PlaybackSource.CONTINUIDAD
+            ):
+                automation.on_track_finished(info)
+                return
+
+            # Se a automatizacion esta activa pero en NONE
+            # (p.e. despois de pulsar Next desde parrilla),
+            # forzar tick inmediato para iniciar Continuidad sen silencio
+            if automation.is_active and automation.source == PlaybackSource.NONE:
+                automation.tick()
+                return
+
+        except Exception:
+            pass
+
+        # Reproduccion manual: avanzar na cola
         self._queue.on_track_finished(info)
 
     def _on_engine_vu_changed(self, vu: VUMeterData):
-        """Actualizar indicadores VU.
-        NOTA: Xa se chama via GLib.idle_add desde AudioEngine._safe_call."""
-        self._vu_left._level = vu.level_left   # type: ignore[attr-defined]
-        self._vu_left._peak = vu.peak_left      # type: ignore[attr-defined]
-        self._vu_right._level = vu.level_right  # type: ignore[attr-defined]
-        self._vu_right._peak = vu.peak_right    # type: ignore[attr-defined]
-        self._vu_left.queue_draw()
-        self._vu_right.queue_draw()
+        """Actualizar indicadores VU con peak hold."""
+        def _update():
+            for bar, level, peak in [
+                (self._vu_left, vu.level_left, vu.peak_left),
+                (self._vu_right, vu.level_right, vu.peak_right),
+            ]:
+                bar._level = level                     # type: ignore[attr-defined]
+                # Peak hold: manter o pico e decaer
+                if level > bar._peak:                   # type: ignore[attr-defined]
+                    bar._peak = level                    # type: ignore[attr-defined]
+                    bar._peak_counter = 0                # type: ignore[attr-defined]
+                else:
+                    bar._peak_counter += 1               # type: ignore[attr-defined]
+                    if bar._peak_counter >= 15:          # ~0.9s hold (60ms interval)
+                        bar._peak = max(                 # type: ignore[attr-defined]
+                            bar._peak - 0.035, level     # type: ignore[attr-defined]
+                        )
+                        bar._peak_counter = 8            # type: ignore[attr-defined]
+                bar.queue_draw()
+
+        if self._engine.is_available:
+            GLib.idle_add(_update)
+        else:
+            _update()
 
     def _on_engine_error(self, error_msg: str):
-        """Mostrar error.
-        NOTA: Xa se chama via GLib.idle_add desde AudioEngine._safe_call."""
-        self._track_title.set_label(f"Error: {error_msg[:50]}")
-        self._track_artist.set_label("")
+        """Mostrar error."""
+        def _update():
+            self._track_title.set_label(f"Error: {error_msg[:50]}")
+            self._track_artist.set_label("")
+
+        if self._engine.is_available:
+            GLib.idle_add(_update)
+        else:
+            _update()
 
     def _on_engine_tags_changed(self, info: TrackInfo):
         """Actualizar info de pista desde tags.
-        NOTA: Xa se chama via GLib.idle_add desde AudioEngine._safe_call."""
-        if info.title:
-            self._track_title.set_label(info.title)
-        if info.artist:
-            self._track_artist.set_label(info.artist)
+
+        Se estamos en Parrilla (evento), o titulo mostra o nome do evento
+        e o subtitulo mostra o nome do audio (dos tags).
+        Se estamos en Continuidad ou manual, mostra os tags normalmente.
+        """
+        def _update():
+            if self._parrilla_event_name:
+                # En Parrilla: titulo = evento, subtitulo = info do audio
+                artist_text = info.title or ""
+                if info.artist:
+                    if artist_text:
+                        artist_text = f"{info.artist} - {artist_text}"
+                    else:
+                        artist_text = info.artist
+                # Non cambiar _track_title (mantemos o nome do evento)
+                self._track_artist.set_label(artist_text)
+            else:
+                # Continuidad ou manual: mostrar tags normalmente
+                if info.title:
+                    self._track_title.set_label(info.title)
+                if info.artist:
+                    self._track_artist.set_label(info.artist)
+
+        if self._engine.is_available:
+            GLib.idle_add(_update)
+        else:
+            _update()
 
     # ── Handlers de la cola ──
 
     def _on_queue_changed(self):
         """La cola ha cambiado (items agregados/eliminados)."""
-        if self._engine.state == PlaybackState.STOPPED and not self._queue.is_empty:
-            self._track_title.set_label("Cola lista")
-            self._track_artist.set_label(
-                f"{self._queue.count} pistas | {self._queue.mode_label}"
-            )
+        def _update():
+            if self._engine.state == PlaybackState.STOPPED and not self._queue.is_empty:
+                self._track_title.set_label("Cola lista")
+                self._track_artist.set_label(
+                    f"{self._queue.count} pistas | {self._queue.mode_label}"
+                )
+
+        if self._engine.is_available:
+            GLib.idle_add(_update)
+        else:
+            _update()
 
     def _on_queue_current_changed(self, item):
         """Pista actual de la cola cambio."""
         pass  # Se actualiza cuando el motor empieza a reproducir
+
+    # ── Display de tempo ──
+
+    def _update_time_display(self, info: TrackInfo):
+        """Actualizar o label de tempo segundo o modo actual (elapsed/total ou restante)."""
+        if info.is_streaming or info.duration_ms <= 0:
+            # Streaming ou duracion descoñecida: so mostrar elapsed
+            self._time_label.set_label(f"{info.position_str} / --:--")
+            return
+
+        if self._show_remaining:
+            remaining_ms = max(0, info.duration_ms - info.position_ms)
+            remaining_str = TrackInfo._format_ms(remaining_ms)
+            self._time_label.set_label(f"-{remaining_str}")
+        else:
+            self._time_label.set_label(f"{info.position_str} / {info.duration_str}")
+
+    def _on_time_label_clicked(self, gesture, n_press, x, y):
+        """Toggle entre modo elapsed/total e modo restante."""
+        self._show_remaining = not self._show_remaining
+        # Actualizar inmediatamente coa info actual
+        info = self._engine.track_info
+        if info:
+            self._update_time_display(info)
 
     # ── Utilidades ──
 

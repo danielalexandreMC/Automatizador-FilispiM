@@ -20,7 +20,7 @@ from radio_automator.core.database import _get_data_dir
 
 # ── Constantes ──
 APP_NAME = "Radio Automator"
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.2.0-alpha"
 
 def _get_log_dir() -> Path:
     """Obtener directorio de logs (respecta RADIO_AUTOMATOR_DIR)."""

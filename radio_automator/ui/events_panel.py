@@ -11,15 +11,6 @@ from radio_automator.core.database import get_session, RadioEvent, Playlist
 from radio_automator.services.playlist_service import PlaylistService
 from radio_automator.ui.layout import PanelContainer
 
-# Función auxiliar (engadir despois dos imports)
-def _clear_box(box):
-    """Eliminar todos os fillows dun Box."""
-    child = box.get_first_child()
-    while child is not None:
-        next_child = child.get_next_sibling()
-        box.remove(child)
-        child = next_child
-
 
 class EventRow(Gtk.Box):
     """Fila visual para un evento programado."""
@@ -128,7 +119,9 @@ class EventsPanel(PanelContainer):
 
     def refresh(self):
         """Recargar la lista de eventos."""
-        _clear_box(self._list)
+        # GTK 4.6: Box non ten remove_all()
+        while self._list.get_first_child():
+            self._list.remove(self._list.get_first_child())
         events = (
             self._session.query(RadioEvent)
             .filter_by(is_active=True)
@@ -153,18 +146,21 @@ class EventsPanel(PanelContainer):
         is_edit = edit_event is not None
         title = f"Editar: {edit_event.name}" if is_edit else "Nuevo Evento"
 
-        dialog = Gtk.Window(
-            transient_for=self.get_root() if self.get_root() else None,
-            modal=True,
-            title=title,
-            default_width=500,
-            default_height=650,
-        )
+        # Ventana modal propia en vez de MessageDialog (GTK 4.6 compatible)
+        dialog = Gtk.Window()
+        dialog.set_title(title)
+        dialog.set_transient_for(self.get_root() if self.get_root() else None)
+        dialog.set_modal(True)
         dialog.set_resizable(True)
+        dialog.set_default_size(520, -1)
 
+        # Contenedor principal
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        # Area de contido con scroll (sen limite de altura)
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll.set_max_content_height(500)
+        scroll.set_min_content_height(400)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         box.set_margin_top(12)
@@ -269,7 +265,7 @@ class EventsPanel(PanelContainer):
         file_label.set_xalign(0)
         file_box.append(file_label)
         file_path_label = Gtk.Label(
-            label=edit_event.local_file_path if is_edit else "(Ninguno)",
+            label=edit_event.local_file_path or "(Ninguno)" if edit_event else "(Ninguno)",
         )
         file_path_label.set_hexpand(True)
         file_path_label.set_xalign(0)
@@ -278,32 +274,37 @@ class EventsPanel(PanelContainer):
         browse_file_btn = Gtk.Button(label="📂")
         browse_file_btn.add_css_class("ra-button")
 
-        selected_file = {"path": edit_event.local_file_path if is_edit else ""}
+        selected_file = {"path": edit_event.local_file_path or "" if edit_event else ""}
 
         def on_file_browse(btn):
-            dlg = Gtk.FileChooserDialog(
-                title="Seleccionar archivo de audio",
-                action=Gtk.FileChooserAction.OPEN,
-                transient_for=self.get_root() if self.get_root() else None,
-            )
-            audio_filter = Gtk.FileFilter()
-            audio_filter.set_name("Audio")
-            for ext in ["*.mp3", "*.wav", "*.ogg", "*.flac", "*.opus", "*.m4a"]:
-                audio_filter.add_pattern(ext)
-            dlg.add_filter(audio_filter)
+            parent = self.get_root() if self.get_root() else None
+            try:
+                dlg = Gtk.FileChooserDialog(
+                    title="Seleccionar archivo de audio",
+                    transient_for=parent,
+                    modal=True,
+                    action=Gtk.FileChooserAction.OPEN,
+                )
+                audio_filter = Gtk.FileFilter()
+                audio_filter.set_name("Audio")
+                for ext in ["*.mp3", "*.wav", "*.ogg", "*.flac", "*.opus", "*.m4a"]:
+                    audio_filter.add_pattern(ext)
+                dlg.add_filter(audio_filter)
+                dlg.add_button("_Cancelar", Gtk.ResponseType.CANCEL)
+                dlg.add_button("_Abrir", Gtk.ResponseType.ACCEPT)
+            except Exception as e:
+                print(f"[EventsPanel] Error al crear dialogo archivo: {e}")
+                return
 
             def on_resp(d, r):
-                if r == Gtk.ResponseType.ACCEPT:
-                    gfile = d.get_file()
-                    if gfile:
-                        selected_file["path"] = gfile.get_path()
-                        file_path_label.set_label(gfile.get_path())
                 d.destroy()
+                if r == Gtk.ResponseType.ACCEPT:
+                    f = d.get_file()
+                    if f:
+                        selected_file["path"] = f.get_path()
+                        file_path_label.set_label(f.get_path())
 
             dlg.connect("response", on_resp)
-            dlg.add_button("Cancelar", Gtk.ResponseType.CANCEL)
-            dlg.add_button("Seleccionar", Gtk.ResponseType.OK)
-            dlg.set_default_response(Gtk.ResponseType.OK)
             dlg.show()
 
         browse_file_btn.connect("clicked", on_file_browse)
@@ -317,7 +318,7 @@ class EventsPanel(PanelContainer):
         folder_label.set_xalign(0)
         folder_box.append(folder_label)
         folder_path_label = Gtk.Label(
-            label=edit_event.local_folder_path if is_edit else "(Ninguna)",
+            label=edit_event.local_folder_path or "(Ninguna)" if edit_event else "(Ninguna)",
         )
         folder_path_label.set_hexpand(True)
         folder_path_label.set_xalign(0)
@@ -326,27 +327,32 @@ class EventsPanel(PanelContainer):
         browse_folder_btn = Gtk.Button(label="📂")
         browse_folder_btn.add_css_class("ra-button")
 
-        selected_folder = {"path": edit_event.local_folder_path if is_edit else ""}
+        selected_folder = {"path": edit_event.local_folder_path or "" if edit_event else ""}
 
         def on_folder_browse(btn):
-            dlg = Gtk.FileChooserDialog(
-                title="Seleccionar carpeta",
-                action=Gtk.FileChooserAction.SELECT_FOLDER,
-                transient_for=self.get_root() if self.get_root() else None,
-            )
+            parent = self.get_root() if self.get_root() else None
+            try:
+                dlg = Gtk.FileChooserDialog(
+                    title="Seleccionar carpeta",
+                    transient_for=parent,
+                    modal=True,
+                    action=Gtk.FileChooserAction.SELECT_FOLDER,
+                )
+                dlg.add_button("_Cancelar", Gtk.ResponseType.CANCEL)
+                dlg.add_button("_Seleccionar", Gtk.ResponseType.ACCEPT)
+            except Exception as e:
+                print(f"[EventsPanel] Error al crear dialogo carpeta: {e}")
+                return
 
             def on_resp(d, r):
+                d.destroy()
                 if r == Gtk.ResponseType.ACCEPT:
                     f = d.get_file()
                     if f:
                         selected_folder["path"] = f.get_path()
                         folder_path_label.set_label(f.get_path())
-                d.destroy()
 
             dlg.connect("response", on_resp)
-            dlg.add_button("Cancelar", Gtk.ResponseType.CANCEL)
-            dlg.add_button("Seleccionar", Gtk.ResponseType.OK)
-            dlg.set_default_response(Gtk.ResponseType.OK)
             dlg.show()
 
         browse_folder_btn.connect("clicked", on_folder_browse)
@@ -395,161 +401,135 @@ class EventsPanel(PanelContainer):
 
         box.append(repeat_box)
 
-        # Botons
-        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        btn_box.set_halign(Gtk.Align.END)
-        btn_box.set_margin_top(12)
+        scroll.set_child(box)
+        main_box.append(scroll)
+
+        # Barra de botóns (separada do scroll, sempre visible)
+        btn_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_bar.set_margin_top(8)
+        btn_bar.set_margin_bottom(8)
+        btn_bar.set_margin_start(16)
+        btn_bar.set_margin_end(16)
+        btn_bar.set_hexpand(True)
+
+        # Spacer para empurrar botóns á dereita
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        btn_bar.append(spacer)
 
         cancel_btn = Gtk.Button(label="Cancelar")
         cancel_btn.add_css_class("ra-button")
+        btn_bar.append(cancel_btn)
 
-        save_btn = Gtk.Button(label="Gardar")
-        save_btn.add_css_class("ra-button-suggested")
+        save_btn = Gtk.Button(label="Guardar")
+        save_btn.add_css_class("ra-button-primary")
+        save_btn.add_css_class("ra-button")
+        btn_bar.append(save_btn)
 
-        btn_box.append(cancel_btn)
-        btn_box.append(save_btn)
-        box.append(btn_box)
-
-        scroll.set_child(box)
-        dialog.set_child(scroll)
+        main_box.append(btn_bar)
+        dialog.set_child(main_box)
         name_entry.grab_focus()
 
-        def on_response(dialog, response_id):
-            if response_id == Gtk.ResponseType.OK:
-                name = name_entry.get_text().strip()
-                start_time = start_entry.get_text().strip()
-                end_time = end_entry.get_text().strip()
-                streaming_url = stream_entry.get_text().strip()
+        def do_save():
+            name = name_entry.get_text().strip()
+            start_time = start_entry.get_text().strip()
+            end_time = end_entry.get_text().strip()
+            streaming_url = stream_entry.get_text().strip()
 
-                if not name:
-                    self._show_error("El nombre del evento es obligatorio")
-                    return
-                if not start_time or len(start_time) != 5 or start_time[2] != ':':
-                    self._show_error("La hora de inicio debe tener formato HH:MM")
-                    return
+            if not name:
+                self._show_error("El nombre del evento es obligatorio")
+                return
+            if not start_time or len(start_time) != 5 or start_time[2] != ':':
+                self._show_error("La hora de inicio debe tener formato HH:MM")
+                return
 
-                # Si es streaming, la hora de fin es obligatoria
-                if streaming_url and not end_time:
-                    self._show_error(
-                        "Los eventos de streaming deben tener hora de fin obligatoria"
-                    )
-                    return
-
-                # Validar formato de hora de fin
-                if end_time and (len(end_time) != 5 or end_time[2] != ':'):
-                    self._show_error("La hora de fin debe tener formato HH:MM")
-                    return
-
-                # Playlist seleccionada
-                pl_idx = playlist_combo.get_selected()
-                playlist_id = None
-                if pl_idx > 0 and pl_idx - 1 < len(playlists):
-                    playlist_id = playlists[pl_idx - 1].id
-
-                # Dias
-                week_days = ",".join(
-                    "1" if days_data[i].get_active() else "0"
-                    for i in range(7)
+            if streaming_url and not end_time:
+                self._show_error(
+                    "Los eventos de streaming deben tener hora de fin obligatoria"
                 )
+                return
 
-                # Patron
-                pattern_map = {0: "weekly", 1: "daily", 2: "once", 3: "selected_days"}
-                repeat_idx = repeat_combo.get_selected()
-                repeat_pattern = pattern_map.get(repeat_idx, "weekly")
+            if end_time and (len(end_time) != 5 or end_time[2] != ':'):
+                self._show_error("La hora de fin debe tener formato HH:MM")
+                return
 
-                try:
-                    if is_edit:
-                        edit_event.name = name
-                        edit_event.start_time = start_time
-                        edit_event.end_time = end_time or None
-                        edit_event.streaming_url = streaming_url or None
-                        edit_event.playlist_id = playlist_id
-                        edit_event.week_days = week_days
-                        edit_event.repeat_pattern = repeat_pattern
-                        edit_event.local_file_path = selected_file["path"] or None
-                        edit_event.local_folder_path = selected_folder["path"] or None
-                    else:
-                        new_event = RadioEvent(
-                            name=name,
-                            start_time=start_time,
-                            end_time=end_time or None,
-                            streaming_url=streaming_url or None,
-                            playlist_id=playlist_id,
-                            week_days=week_days,
-                            repeat_pattern=repeat_pattern,
-                            local_file_path=selected_file["path"] or None,
-                            local_folder_path=selected_folder["path"] or None,
-                        )
-                        self._session.add(new_event)
-                    self._session.commit()
-                    self.refresh()
-                except Exception as e:
-                    self._session.rollback()
-                    self._show_error(f"Error al guardar evento: {e}")
+            pl_idx = playlist_combo.get_selected()
+            playlist_id = None
+            if pl_idx > 0 and pl_idx - 1 < len(playlists):
+                playlist_id = playlists[pl_idx - 1].id
+
+            week_days = ",".join(
+                "1" if days_data[i].get_active() else "0"
+                for i in range(7)
+            )
+
+            pattern_map = {0: "weekly", 1: "daily", 2: "once", 3: "selected_days"}
+            repeat_idx = repeat_combo.get_selected()
+            repeat_pattern = pattern_map.get(repeat_idx, "weekly")
+
+            try:
+                if is_edit:
+                    edit_event.name = name
+                    edit_event.start_time = start_time
+                    edit_event.end_time = end_time or None
+                    edit_event.streaming_url = streaming_url or None
+                    edit_event.playlist_id = playlist_id
+                    edit_event.week_days = week_days
+                    edit_event.repeat_pattern = repeat_pattern
+                    edit_event.local_file_path = selected_file["path"] or None
+                    edit_event.local_folder_path = selected_folder["path"] or None
+                else:
+                    new_event = RadioEvent(
+                        name=name,
+                        start_time=start_time,
+                        end_time=end_time or None,
+                        streaming_url=streaming_url or None,
+                        playlist_id=playlist_id,
+                        week_days=week_days,
+                        repeat_pattern=repeat_pattern,
+                        local_file_path=selected_file["path"] or None,
+                        local_folder_path=selected_folder["path"] or None,
+                    )
+                    self._session.add(new_event)
+                self._session.commit()
+                self.refresh()
+            except Exception as e:
+                self._session.rollback()
+                self._show_error(f"Error al guardar evento: {e}")
             dialog.destroy()
 
-        save_btn.connect("clicked", lambda b: on_response(dialog, Gtk.ResponseType.OK))
-        cancel_btn.connect("clicked", lambda b: dialog.destroy())
-        dialog.connect("close-request", lambda w: w.destroy())
+        def do_cancel():
+            dialog.destroy()
+
+        cancel_btn.connect("clicked", lambda b: do_cancel())
+        save_btn.connect("clicked", lambda b: do_save())
         dialog.show()
 
     def _show_edit_dialog(self, event: RadioEvent):
         self._show_create_dialog(edit_event=event)
 
     def _show_delete_confirm(self, event: RadioEvent):
-        """Pedir confirmacion para eliminar un evento."""
-        dialog = Gtk.Window(
+        dialog = Gtk.MessageDialog(
             transient_for=self.get_root() if self.get_root() else None,
             modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.YES_NO,
             title="Eliminar Evento",
-            default_width=400,
-            default_height=150,
+            text=f"¿Seguro que quieres eliminar el evento \"{event.name}\"?",
         )
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        box.set_margin_top(16)
-        box.set_margin_start(16)
-        box.set_margin_end(16)
-        box.set_margin_bottom(16)
-
-        question = Gtk.Label(label=f"¿Seguro que queres eliminar o evento \"{event.name}\"?")
-        question.set_xalign(0)
-        question.add_css_class("ra-label")
-        box.append(question)
-
-        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        btn_box.set_halign(Gtk.Align.END)
-        btn_box.set_margin_top(8)
-
-        spacer = Gtk.Box()
-        spacer.set_hexpand(True)
-        btn_box.append(spacer)
-
-        cancel_btn = Gtk.Button(label="Cancelar")
-        cancel_btn.add_css_class("ra-button")
-        cancel_btn.connect("clicked", lambda b: dialog.destroy())
-        btn_box.append(cancel_btn)
-
-        delete_btn = Gtk.Button(label="Eliminar")
-        delete_btn.add_css_class("ra-button")
-        # Color rojo
-        delete_btn.add_css_class("destructive-action")
-
-        def do_delete():
-            try:
-                self._session.delete(event)
-                self._session.commit()
-                self.refresh()
-            except Exception as e:
-                self._session.rollback()
-                self._show_error(f"Error ao eliminar: {e}")
+        def on_response(dialog, response_id):
+            if response_id == Gtk.ResponseType.YES:
+                try:
+                    self._session.delete(event)
+                    self._session.commit()
+                    self.refresh()
+                except Exception as e:
+                    self._session.rollback()
+                    self._show_error(f"Error al eliminar: {e}")
             dialog.destroy()
 
-        delete_btn.connect("clicked", lambda b: do_delete())
-        btn_box.append(delete_btn)
-        box.append(btn_box)
-
-        dialog.set_child(box)
+        dialog.connect("response", on_response)
         dialog.show()
 
     def _show_error(self, message: str):

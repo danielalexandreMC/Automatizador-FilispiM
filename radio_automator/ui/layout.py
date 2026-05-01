@@ -7,14 +7,6 @@ import gi
 gi.require_version('Gtk', '4.0')
 from gi.repository import Gtk, Gio, GLib, Pango
 
-# Función auxiliar (engadir despois dos imports)
-def _clear_box(box):
-    """Eliminar todos os fillows dun Box."""
-    child = box.get_first_child()
-    while child is not None:
-        next_child = child.get_next_sibling()
-        box.remove(child)
-        child = next_child
 
 # ═══════════════════════════════════════
 # Sidebar de navegacion
@@ -41,22 +33,47 @@ class NavigationSidebar(Gtk.Box):
         self._on_navigate = on_navigate
         self._buttons: dict[str, Gtk.Button] = {}
 
-        # Logo / titulo
-        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        # Logo / titulo (layout VERTICAL: logo arriba a ancho completo, titulo debaixo)
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         header.set_margin_top(16)
         header.set_margin_bottom(12)
-        header.set_margin_start(16)
-        header.set_margin_end(16)
+        header.set_margin_start(12)
+        header.set_margin_end(12)
+
+        # Logo (Gtk.Picture) - ocupa todo o ancho da columna, alto maximo 90px
+        self._logo_picture = Gtk.Picture()
+        self._logo_picture.set_size_request(300, 90)
+        self._logo_picture.set_valign(Gtk.Align.CENTER)
+        self._logo_picture.set_visible(False)
+        header.append(self._logo_picture)
+
+        # Titulo e version debaixo do logo, centrados
+        title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        title_box.set_margin_top(6)
 
         title = Gtk.Label(label="Radio Automator")
         title.add_css_class("ra-heading")
-        title.set_xalign(0)
-        header.append(title)
+        title.set_xalign(0.5)
+        title_box.append(title)
 
-        version = Gtk.Label(label="v0.2.0-alpha")
+        version = Gtk.Label(label=f"v{__import__('radio_automator').__version__}")
         version.add_css_class("ra-label-dim")
-        version.set_xalign(0)
-        header.append(version)
+        version.set_xalign(0.5)
+        title_box.append(version)
+
+        header.append(title_box)
+
+        # Cargar logo desde configuracion
+        try:
+            from radio_automator.core.config import get_config
+            import os
+            cfg = get_config()
+            logo_path = cfg.get("logo_path", "")
+            if logo_path and os.path.isfile(logo_path):
+                self._logo_picture.set_filename(logo_path)
+                self._logo_picture.set_visible(True)
+        except Exception:
+            pass
 
         self.append(header)
 
@@ -143,6 +160,18 @@ class NavigationSidebar(Gtk.Box):
             self._status_label.remove_css_class("ra-label-accent")
             self._status_label.add_css_class("ra-label-dim")
 
+    def update_logo(self, logo_path: str):
+        """Actualizar o logotipo do sidebar desde a configuracion."""
+        import os
+        try:
+            if logo_path and os.path.isfile(logo_path):
+                self._logo_picture.set_filename(logo_path)
+                self._logo_picture.set_visible(True)
+            else:
+                self._logo_picture.set_visible(False)
+        except Exception:
+            self._logo_picture.set_visible(False)
+
 
 # ═══════════════════════════════════════
 # Contenedor de panel base
@@ -200,7 +229,9 @@ class PanelContainer(Gtk.Box):
 
     def set_empty_state(self, icon: str = "🎵", message: str = "No hay elementos"):
         """Mostrar un estado vacio cuando no hay items."""
-        _clear_box(self._content)
+        # GTK 4.6: remove_all() non dispoñible
+        while self._content.get_first_child():
+            self._content.remove(self._content.get_first_child())
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         box.add_css_class("ra-empty-state")

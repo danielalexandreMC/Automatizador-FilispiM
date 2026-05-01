@@ -116,6 +116,9 @@ class AutomationEngine:
         self._active: bool = False
         self._current_event_id: int | None = None
         self._started_at: datetime | None = None
+        self._current_event_type: str | None = None  # "streaming", "playlist", "file", "folder"
+        self._event_content_finished: bool = False  # True cando o contido do evento rematou e Continuidad enche
+        self._current_folder_path: str | None = None  # Ruta da carpeta para eventos tipo folder
 
         # Contadores
         self._events_started: int = 0
@@ -125,6 +128,7 @@ class AutomationEngine:
         self._check_interval_s: float = self.DEFAULT_CHECK_INTERVAL_S
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+        self._play_lock = threading.Lock()  # Evitar double-play (race condition)
 
         # Estado de Continuidad
         self._continuidad = ContinuidadState()
@@ -202,8 +206,11 @@ class AutomationEngine:
         # Publicar evento
         get_event_bus().publish("automation.started", {"interval": self._check_interval_s})
 
-        # Hacer un primer tick inmediato
-        self.tick()
+        # NOTA: Non chamamos self.tick() aqui.
+        # O fío de automatizacion (_run_loop) xa chama tick()
+        # como primeira operacion. Chamar tick() aqui e no fío
+        # simultaneamente causaba unha race condition que facía
+        # que Continuidad se iniciase DUAS VEZES (dous play_file).
 
         self._notify_status()
 
@@ -252,7 +259,12 @@ class AutomationEngine:
             print(f"[AutomationEngine] Error en tick: {e}")
 
     def _do_tick(self):
-        """Logica del tick."""
+        """Logica del tick.
+
+        Protexido por _play_lock para evitar que se execute
+        simultaneamente con on_track_finished() ou outro tick.
+        Isto previne a double-play race condition.
+        """
         now = datetime.now()
         parrilla = get_parrilla_service()
         engine = get_audio_engine()
@@ -272,29 +284,54 @@ class AutomationEngine:
         current_event = parrilla.get_event_at_time(now)
 
         if current_event:
-            # 2a. Ya estamos reproduciendo ESTE evento?
-            if (self._source == PlaybackSource.PARRILLA
-                    and self._current_event_id == current_event.id):
-                # Verificar si el evento deberia terminar
+            # 2a. Ya estamos en ESTE evento (por ID)?
+            if self._current_event_id == current_event.id:
+                # 2a-i. O contido do evento rematou e Continuidad esta enchendo
+                if self._event_content_finished:
+                    # Solo comprobar se a hora de fin do evento chegou
+                    if current_event.end_time and engine.state == PlaybackState.PLAYING:
+                        end_time = self._parse_time(current_event.end_time)
+                        if now.time() >= end_time:
+                            print(f"[AutomationEngine] Evento '{current_event.name}' rematou (gap-fill)")
+                            self._stop_playback()
+                            self._current_event_id = None
+                            self._event_content_finished = False
+                            self._current_folder_path = None
+                            self._set_source(PlaybackSource.NONE)
+                            get_event_bus().publish("automation.event_ended", {
+                                "event_id": current_event.id,
+                                "event_name": current_event.name,
+                            })
+                            if not parrilla.get_event_at_time(now):
+                                self._start_continuidad()
+                    return  # Continuidad segue enchendo ou limpiamos
+
+                # 2a-ii. Evento reproduciendose normalmente (contido non rematado)
                 if current_event.end_time and engine.state == PlaybackState.PLAYING:
                     end_time = self._parse_time(current_event.end_time)
                     if now.time() >= end_time:
-                        print(f"[AutomationEngine] Evento '{current_event.name}' termino (hora fin: {current_event.end_time})")
+                        print(f"[AutomationEngine] Evento '{current_event.name}' terminou (hora fin: {current_event.end_time})")
                         self._stop_playback()
                         self._current_event_id = None
-                        # Publicar evento de fin
+                        self._event_content_finished = False
+                        self._current_folder_path = None
+                        self._set_source(PlaybackSource.NONE)
                         get_event_bus().publish("automation.event_ended", {
                             "event_id": current_event.id,
                             "event_name": current_event.name,
                         })
-                        # El proximo tick iniciara Continuidad o el siguiente evento
-                        return
+                        if not parrilla.get_event_at_time(now):
+                            self._start_continuidad()
                 return  # Seguir reproduciendo el evento actual
 
-            # 2b. Nuevo evento que iniciar
+            # 2b. Novo evento que iniciar (ou mesmo evento tras reinicio)
+            # Non reiniciar un evento que xa rematou o seu contido
+            # (event_content_finished protege contra restart)
             print(f"[AutomationEngine] Iniciando evento: {current_event.name}")
             self._save_continuidad_state()
             self._stop_playback()
+            self._event_content_finished = False
+            self._current_folder_path = None
             self._start_event(current_event)
             return
 
@@ -302,9 +339,11 @@ class AutomationEngine:
 
         # 3a. Estabamos reproduciendo un evento que ya termino?
         if self._source == PlaybackSource.PARRILLA and self._current_event_id is not None:
-            print(f"[AutomationEngine] Evento de parrilla finalizado, parando")
+            print("[AutomationEngine] Evento de parrilla finalizado, parando")
             self._stop_playback()
             self._current_event_id = None
+            self._event_content_finished = False
+            self._current_folder_path = None
             # Caer al caso 3b para iniciar Continuidad
 
         # 3b. Iniciar/mantener Continuidad si no estamos ya en ella
@@ -325,15 +364,18 @@ class AutomationEngine:
         self._current_event_id = event.id
         self._events_started += 1
 
-        # Streaming
+        # Streaming - enche todo o evento
         if event.is_streaming and event.streaming_url:
+            self._current_event_type = "streaming"
             success = engine.play_stream(event.streaming_url)
             if success:
+                self._update_display_title(event.name, event.streaming_url)
                 self._publish_event_started(event, "streaming")
                 return
 
-        # Playlist
+        # Playlist (loop ou single)
         if event.playlist_id:
+            self._current_event_type = "playlist"
             count = queue.load_playlist(event.playlist_id)
             if count > 0:
                 item = queue.play_next()
@@ -342,26 +384,57 @@ class AutomationEngine:
                         engine.play_stream(item.filepath)
                     else:
                         engine.play_file(item.filepath)
+                    self._update_display_title(event.name, item.filepath)
                     self._publish_event_started(event, "playlist")
                     return
 
-        # Archivo local
+        # Arquivo local - non fai bucle
         if event.local_file_path:
+            self._current_event_type = "file"
             engine.play_file(event.local_file_path)
+            self._update_display_title(event.name, event.local_file_path)
             self._publish_event_started(event, "file")
             return
 
-        # Carpeta local
+        # Carpeta local - enche todo o evento con audios aleatorios
         if event.local_folder_path:
+            self._current_event_type = "folder"
+            self._current_folder_path = event.local_folder_path
             from radio_automator.services.folder_scanner import FolderScanner
             scanner = FolderScanner()
             next_file = scanner.get_next_random(event.local_folder_path)
             if next_file:
                 engine.play_file(next_file)
+                self._update_display_title(event.name, next_file)
                 self._publish_event_started(event, "folder")
                 return
 
         print(f"[AutomationEngine] Evento '{event.name}' sin contenido reproducible")
+
+    def _update_display_title(self, title: str, track_path: str = ""):
+        """Publicar evento para actualizar o titulo no reproductor.
+
+        Envia o nome do evento como titulo principal e o nome do audio
+        actual como subtitulo (artist).
+        """
+        from pathlib import Path as _Path
+        artist = _Path(track_path).stem if track_path else ""
+        get_event_bus().publish("automation.update_title", {
+            "title": title,
+            "artist": artist,
+        })
+
+    def _update_display_title_for_current_event(self, track_path: str = ""):
+        """Actualizar display co nome do evento actual e pista actual."""
+        if not self._current_event_id:
+            return
+        session = get_session()
+        try:
+            ev = session.get(RadioEvent, self._current_event_id)
+            if ev:
+                self._update_display_title(ev.name, track_path)
+        finally:
+            session.close()
 
     def _publish_event_started(self, event: RadioEvent, content_type: str):
         """Publicar evento de inicio en EventBus."""
@@ -522,6 +595,8 @@ class AutomationEngine:
 
         engine.stop()
         queue.clear()
+        self._current_event_type = None
+        self._current_folder_path = None
 
     def set_manual_mode(self):
         """
@@ -557,28 +632,130 @@ class AutomationEngine:
     def on_track_finished(self, track_info: TrackInfo | None = None):
         """
         Callback invocado cuando termina una pista.
-        Gestiona el avance en Continuidad y guarda estado.
+        Gestiona el avance en Continuidad, parrilla e garda estado.
+
+        Comportamento por tipo de evento:
+        - Streaming: conexion cortouse -> Continuidad (gap-fill)
+        - Playlist (loop): avanzar na playlist (enche evento)
+        - Playlist (single): avanzar; se remata -> Continuidad (gap-fill)
+        - File: audio rematou -> Continuidad (gap-fill, non fai bucle)
+        - Folder: obter seguinte audio aleatorio da carpeta (enche evento)
+
+        Protexido por _play_lock para evitar race conditions.
+        cío de automatizacion (_run_loop).
         """
         if not self._active:
             return
 
-        if self._source == PlaybackSource.CONTINUIDAD:
-            # Guardar estado antes de avanzar
-            self._save_continuidad_state()
-            # Avanzar a la siguiente pista en la cola
-            queue = get_play_queue()
-            next_item = queue.play_next()
-            if next_item:
-                engine = get_audio_engine()
-                if next_item.is_streaming:
-                    engine.play_stream(next_item.filepath)
+        # Adquirir lock para evitar double-play co tick thread
+        if not self._play_lock.acquire(blocking=False):
+            # O fío de automatizacion esta executando un tick,
+            # que xa se encargara de avanzar a pista.
+            # Non facemos nada para evitar dous play_file simultaneos.
+            print("[AutomationEngine] on_track_finished: lock ocupado, saltando")
+            return
+
+        try:
+            if self._source == PlaybackSource.CONTINUIDAD:
+                # Guardar estado antes de avanzar
+                self._save_continuidad_state()
+                # Avanzar a la siguiente pista en la cola
+                queue = get_play_queue()
+                next_item = queue.play_next()
+                if next_item:
+                    engine = get_audio_engine()
+                    if next_item.is_streaming:
+                        engine.play_stream(next_item.filepath)
+                    else:
+                        engine.play_file(next_item.filepath)
                 else:
-                    engine.play_file(next_item.filepath)
-            else:
-                # La cola termino, reiniciar (Continuidad es loop)
-                print("[AutomationEngine] Continuidad alcanzo el final, reiniciando")
-                self._continuidad.item_index = 0
-                self._start_continuidad()
+                    # La cola termino, reiniciar (Continuidad es loop)
+                    print("[AutomationEngine] Continuidad alcanzo el final, reiniciando")
+                    self._continuidad.item_index = 0
+                    self._start_continuidad()
+
+            elif self._source == PlaybackSource.PARRILLA:
+                if self._current_event_type == "playlist":
+                    # Playlist: avanzar a seguinte pista
+                    queue = get_play_queue()
+                    next_item = queue.play_next()
+                    if next_item:
+                        engine = get_audio_engine()
+                        if next_item.is_streaming:
+                            engine.play_stream(next_item.filepath)
+                        else:
+                            engine.play_file(next_item.filepath)
+                        self._update_display_title_for_current_event(next_item.filepath)
+                    else:
+                        # A playlist rematou (cola exaurida)
+                        if queue.mode == "loop":
+                            print("[AutomationEngine] Playlist loop exaurida inesperadamente, recargando")
+                            self._reload_current_event_playlist()
+                        else:
+                            # Single: rematou -> Continuidad (gap-fill)
+                            print("[AutomationEngine] Playlist single terminou, gap-fill con Continuidad")
+                            self._event_content_finished = True
+                            queue.clear()
+                            self._start_continuidad()
+
+                elif self._current_event_type == "file":
+                    # Audio unico rematou -> Continuidad (non fai bucle)
+                    print("[AutomationEngine] Audio de evento rematou, gap-fill con Continuidad")
+                    self._event_content_finished = True
+                    queue = get_play_queue()
+                    queue.clear()
+                    self._start_continuidad()
+
+                elif self._current_event_type == "folder":
+                    # Carpeta: obter seguinte audio aleatorio da mesma carpeta
+                    if self._current_folder_path:
+                        from radio_automator.services.folder_scanner import FolderScanner
+                        scanner = FolderScanner()
+                        next_file = scanner.get_next_random(self._current_folder_path)
+                        if next_file:
+                            engine = get_audio_engine()
+                            engine.play_file(next_file)
+                            self._update_display_title_for_current_event(next_file)
+                        else:
+                            print("[AutomationEngine] Carpeta de evento sen arquivos, gap-fill con Continuidad")
+                            self._event_content_finished = True
+                            queue = get_play_queue()
+                            queue.clear()
+                            self._start_continuidad()
+                    else:
+                        self._event_content_finished = True
+                        self._start_continuidad()
+
+                elif self._current_event_type == "streaming":
+                    # Streaming: conexion cortouse -> Continuidad (gap-fill)
+                    print("[AutomationEngine] Streaming de evento cortouse, gap-fill con Continuidad")
+                    self._event_content_finished = True
+                    queue = get_play_queue()
+                    queue.clear()
+                    self._start_continuidad()
+
+        finally:
+            self._play_lock.release()
+
+    def _reload_current_event_playlist(self):
+        """Recargar a playlist do evento actual (para loop inesperadamente exaurido)."""
+        if not self._current_event_id:
+            return
+        session = get_session()
+        try:
+            ev = session.get(RadioEvent, self._current_event_id)
+            if ev and ev.playlist_id:
+                queue = get_play_queue()
+                queue.clear()
+                count = queue.load_playlist(ev.playlist_id)
+                if count > 0:
+                    item = queue.play_next()
+                    if item:
+                        engine = get_audio_engine()
+                        engine.play_file(item.filepath)
+                        self._update_display_title_for_current_event(item.filepath)
+        finally:
+            session.close()
 
     # ── Estado y notificaciones ──
 
@@ -643,10 +820,15 @@ class AutomationEngine:
     # ── Hilo de automatizacion ──
 
     def _run_loop(self):
-        """Bucle principal del hilo de automatizacion."""
+        """Bucle principal del hilo de automatizacion.
+
+        Cada tick esta protexido por _play_lock para evitar
+        race conditions con on_track_finished ou ticks simultaneos.
+        """
         while not self._stop_event.is_set():
             try:
-                self.tick()
+                with self._play_lock:
+                    self.tick()
             except Exception as e:
                 print(f"[AutomationEngine] Error en bucle: {e}")
 

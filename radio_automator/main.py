@@ -94,7 +94,7 @@ class RadioAutomator(Gtk.Application):
         Gtk.Application.do_startup(self)
         self._setup_actions()
         self._apply_dark_theme()
-        # load_theme()
+        load_theme()
 
         # Inicializar sistema de logging
         bus = get_event_bus()
@@ -106,7 +106,6 @@ class RadioAutomator(Gtk.Application):
 
     def do_activate(self):
         if not self._window:
-            load_theme()
             self._create_window()
         self._window.present()
 
@@ -124,10 +123,12 @@ class RadioAutomator(Gtk.Application):
         headerbar = Gtk.HeaderBar()
         headerbar.set_show_title_buttons(True)
 
-        # Titulo de ventana
-        self._window_title = Gtk.Label(label=APP_NAME)
+        # Titulo de ventana (nome da emisora desde config)
+        station_name = get_config().get("station_name", APP_NAME)
+        self._window_title = Gtk.Label(label=station_name)
         self._window_title.add_css_class("title")
         headerbar.set_title_widget(self._window_title)
+        self._window.set_title(station_name)
 
         # Boton menu de aplicacion
         menu_btn = self._build_menu_button()
@@ -154,18 +155,22 @@ class RadioAutomator(Gtk.Application):
         # Area de contenido con Stack
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
+        # Barra de transporte (encima del contenido)
+        self._transport_bar = TransportBar()
+        content_box.append(self._transport_bar)
+
         self._stack = Gtk.Stack()
         self._stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
         self._stack.set_hexpand(True)
         self._stack.set_vexpand(True)
 
         # Crear todos los paneles
-        self._panels["eventos"] = EventsPanel()
-        self._panels["parrilla"] = ParrillaPanel(events_panel=self._panels["eventos"])
+        self._panels["parrilla"] = ParrillaPanel()
         self._panels["playlists"] = PlaylistsPanel(
             on_playlist_selected=self._on_playlist_selected
         )
         self._panels["continuidad"] = ContinuidadPanel()
+        self._panels["eventos"] = EventsPanel()
         self._panels["podcasts"] = PodcastsPanel()
         self._panels["config"] = ConfigPanel()
 
@@ -177,10 +182,6 @@ class RadioAutomator(Gtk.Application):
             self._stack.add_named(scroll, panel_id)
 
         content_box.append(self._stack)
-
-        # Barra de transporte (debajo del contenido, encima de la status bar)
-        self._transport_bar = TransportBar()
-        content_box.append(self._transport_bar)
 
         # Barra de estado mejorada (con reloj)
         self._statusbar = EnhancedStatusBar()
@@ -207,6 +208,7 @@ class RadioAutomator(Gtk.Application):
         engine = get_audio_engine()
         engine.set_callbacks(
             on_state_changed=self._on_engine_state_changed,
+            on_position_changed=self._on_engine_position_changed,
             on_track_finished=None,
             on_vu_changed=None,
             on_error=self._on_engine_error,
@@ -219,6 +221,9 @@ class RadioAutomator(Gtk.Application):
 
         # Iniciar scheduler de podcasts
         get_podcast_scheduler().start()
+
+        # Suscribir a cambios de configuracion (logo, nome emisora, etc.)
+        get_event_bus().subscribe("config.saved", self._on_config_saved)
 
         # Notificacion de bienvenida
         self._notification_service.info(
@@ -330,18 +335,10 @@ class RadioAutomator(Gtk.Application):
     # ── Titulo de ventana dinamico ──
 
     def _update_window_title(self, track_title: str = "", track_artist: str = ""):
-        """Actualizar el titulo de la ventana con info de reproduccion."""
-        if track_title:
-            if track_artist:
-                title = f"{track_title} - {track_artist}"
-            else:
-                title = track_title
-            self._window_title.set_label(f"{APP_NAME} | {title}")
-            self._window.set_title(f"{APP_NAME} - {title}")
-        else:
-            station = get_config().get("station_name", APP_NAME)
-            self._window_title.set_label(station)
-            self._window.set_title(station)
+        """Actualizar el titulo de la ventana: sempre mostra o nome da emisora."""
+        station = get_config().get("station_name", APP_NAME)
+        self._window_title.set_label(station)
+        self._window.set_title(station)
 
     # ── Handlers de audio para titulo dinamico y estado ──
 
@@ -379,6 +376,23 @@ class RadioAutomator(Gtk.Application):
             if info and info.title:
                 self._update_window_title(info.title, info.artist or "")
                 self._statusbar.set_playback_status("Reproduciendo")
+
+        try:
+            GLib.idle_add(_update)
+        except Exception:
+            _update()
+
+    def _on_config_saved(self, event):
+        """Manexar cambios de configuracion (logo, nome emisora)."""
+        def _update():
+            # Actualizar titulo da ventá
+            self._update_window_title()
+            # Actualizar logo no sidebar
+            try:
+                logo_path = get_config().get("logo_path", "")
+                self._sidebar.update_logo(logo_path)
+            except Exception:
+                pass
 
         try:
             GLib.idle_add(_update)
@@ -441,7 +455,7 @@ class RadioAutomator(Gtk.Application):
         self.set_accels_for_action('app.nav.eventos', ['<Control>4'])
         self.set_accels_for_action('app.nav.podcasts', ['<Control>5'])
         self.set_accels_for_action('app.nav.config', ['<Control>6'])
-        self.set_accels_for_action('app.transport.play-pause', ['<ctrl>space'])
+        self.set_accels_for_action('app.transport.play-pause', ['space'])
         self.set_accels_for_action('app.transport.next', ['<Control>Right'])
         self.set_accels_for_action('app.transport.prev', ['<Control>Left'])
         self.set_accels_for_action('app.transport.stop', ['<Control>s'])

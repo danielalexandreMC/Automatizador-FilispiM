@@ -36,11 +36,6 @@ class QueueItem:
     is_streaming: bool = False
 
     @property
-    def mode_label(self) -> str:
-        modes = {"loop": "Bucle", "single": "Unha vez"}
-        return modes.get(self._mode, self._mode or "Bucle")
-
-    @property
     def label(self) -> str:
         name = Path(self.filepath).name if self.filepath else "?"
         if self.title:
@@ -82,38 +77,18 @@ class PlayQueue:
         self._on_current_changed: Callable[[QueueItem | None], None] | None = None
 
     @property
-    def mode_label(self) -> str:
-        modes = {"loop": "Bucle", "single": "Unha vez"}
-        return modes.get(self._mode, self._mode or "Bucle")
-
-    @property
     def items(self) -> list[QueueItem]:
         return list(self._items)
-
-    @property
-    def mode_label(self) -> str:
-        modes = {"loop": "Bucle", "single": "Unha vez"}
-        return modes.get(self._mode, self._mode or "Bucle")
 
     @property
     def current_index(self) -> int:
         return self._current_index
 
     @property
-    def mode_label(self) -> str:
-        modes = {"loop": "Bucle", "single": "Unha vez"}
-        return modes.get(self._mode, self._mode or "Bucle")
-
-    @property
     def current_item(self) -> QueueItem | None:
         if 0 <= self._current_index < len(self._items):
             return self._items[self._current_index]
         return None
-
-    @property
-    def mode_label(self) -> str:
-        modes = {"loop": "Bucle", "single": "Unha vez"}
-        return modes.get(self._mode, self._mode or "Bucle")
 
     @property
     def next_item(self) -> QueueItem | None:
@@ -132,11 +107,6 @@ class PlayQueue:
         return None
 
     @property
-    def mode_label(self) -> str:
-        modes = {"loop": "Bucle", "single": "Unha vez"}
-        return modes.get(self._mode, self._mode or "Bucle")
-
-    @property
     def previous_item(self) -> QueueItem | None:
         """Previsualizar la pista anterior."""
         if not self._items:
@@ -150,27 +120,12 @@ class PlayQueue:
         return self._items[prev_idx]
 
     @property
-    def mode_label(self) -> str:
-        modes = {"loop": "Bucle", "single": "Unha vez"}
-        return modes.get(self._mode, self._mode or "Bucle")
-
-    @property
     def is_empty(self) -> bool:
         return len(self._items) == 0
 
     @property
-    def mode_label(self) -> str:
-        modes = {"loop": "Bucle", "single": "Unha vez"}
-        return modes.get(self._mode, self._mode or "Bucle")
-
-    @property
     def count(self) -> int:
         return len(self._items)
-
-    @property
-    def mode_label(self) -> str:
-        modes = {"loop": "Bucle", "single": "Unha vez"}
-        return modes.get(self._mode, self._mode or "Bucle")
 
     @property
     def mode(self) -> str:
@@ -178,8 +133,9 @@ class PlayQueue:
 
     @property
     def mode_label(self) -> str:
-        modes = {"loop": "Bucle", "single": "Unha vez"}
-        return modes.get(self._mode, self._mode or "Bucle")
+        """Etiqueta legible do modo actual."""
+        labels = {"loop": "Loop", "single": "Unha vez"}
+        return labels.get(self._mode, self._mode)
 
     @property
     def progress_text(self) -> str:
@@ -393,6 +349,7 @@ class PlayQueue:
         """
         Callback para cuando termina una pista.
         Avanza automaticamente a la siguiente.
+        Non usa crossfade porque a pista xa rematou (EOS).
         """
         next_item = self.play_next()
         if next_item is None:
@@ -401,17 +358,12 @@ class PlayQueue:
             engine.stop()
             return
 
-        # Reproducir siguiente pista
+        # Reproducir siguiente pista (sin crossfade - a pista anterior xa rematou)
         engine = get_audio_engine()
         if next_item.is_streaming:
             engine.play_stream(next_item.filepath)
         else:
-            # Intentar crossfade
-            if (engine.state.value == "playing" and
-                    not engine.track_info.is_streaming):
-                engine.play_file_with_crossfade(next_item.filepath)
-            else:
-                engine.play_file(next_item.filepath)
+            engine.play_file(next_item.filepath)
 
     # ── Resolucion de playlists ──
 

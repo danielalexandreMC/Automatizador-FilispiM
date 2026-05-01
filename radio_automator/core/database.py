@@ -48,6 +48,8 @@ def _init_engine():
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA wal_autocheckpoint=100")
         cursor.close()
 
     _session_factory = sessionmaker(bind=_engine, expire_on_commit=False)
@@ -333,7 +335,16 @@ class SystemConfig(Base):
 
 def init_db():
     """Crear todas las tablas y datos iniciales."""
-    Base.metadata.create_all(get_engine())
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    # Forzar checkpoint para que os datos sexan visibles externamente
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+            conn.commit()
+    except Exception:
+        pass
     _seed_continuity()
     _seed_default_config()
 

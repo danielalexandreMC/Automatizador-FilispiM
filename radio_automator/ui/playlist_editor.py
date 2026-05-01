@@ -12,16 +12,6 @@ from radio_automator.services.playlist_service import (
 )
 from radio_automator.services.folder_scanner import FolderScanner
 
-from radio_automator.ui.file_dialogs import open_file_chooser, AUDIO_FILTERS
-
-# Función auxiliar (engadir despois dos imports)
-def _clear_box(box):
-    """Eliminar todos os fillows dun Box."""
-    child = box.get_first_child()
-    while child is not None:
-        next_child = child.get_next_sibling()
-        box.remove(child)
-        child = next_child
 
 # ═══════════════════════════════════════
 # Fila de item en la lista de playlist
@@ -207,7 +197,9 @@ class PlaylistEditor(Gtk.Box):
 
     def refresh(self):
         """Recargar los items de la playlist."""
-        _clear_box(self._items_list)
+        # GTK 4.6: Box non ten remove_all()
+        while self._items_list.get_first_child():
+            self._items_list.remove(self._items_list.get_first_child())
         self._items = self._service.get_items(self._dto.id)
 
         if not self._items:
@@ -239,39 +231,102 @@ class PlaylistEditor(Gtk.Box):
 
     def _add_track(self, _btn):
         """Dialogo para seleccionar archivos de audio."""
-        root = self.get_root() or None
-        files = open_file_chooser(root, "Seleccionar pistas de audio",
-                                  action=Gtk.FileChooserAction.OPEN,
-                                  select_multiple=True,
-                                  filters=AUDIO_FILTERS)
-        for filepath in files:
-            try:
-                self._service.add_item(
-                    playlist_id=self._dto.id,
-                    item_type="track",
-                    filepath=filepath,
-                )
-            except Exception as e:
-                print(f"[PlaylistEditor] Error al anadir pista: {e}")
-        if files:
-            self.refresh()
+        parent = self.get_root() if self.get_root() else None
+
+        # Filtro de audio
+        filter_audio = Gtk.FileFilter()
+        filter_audio.set_name("Archivos de audio")
+        for ext in ["*.mp3", "*.wav", "*.ogg", "*.flac", "*.opus",
+                     "*.aac", "*.m4a", "*.wma"]:
+            filter_audio.add_pattern(ext)
+
+        filter_all = Gtk.FileFilter()
+        filter_all.set_name("Todos los archivos")
+        filter_all.add_pattern("*")
+
+        # FileChooserNative pode fallar silenciosamente via XDG Portal,
+        # usamos FileChooserDialog como fallback (compatible con GTK 4.6)
+        dialog = None
+        try:
+            dialog = Gtk.FileChooserDialog(
+                title="Seleccionar pistas de audio",
+                transient_for=parent,
+                modal=True,
+                action=Gtk.FileChooserAction.OPEN,
+            )
+            dialog.add_filter(filter_audio)
+            dialog.add_filter(filter_all)
+            dialog.set_select_multiple(True)
+            dialog.add_button("_Cancelar", Gtk.ResponseType.CANCEL)
+            dialog.add_button("_Abrir", Gtk.ResponseType.ACCEPT)
+        except Exception as e:
+            print(f"[PlaylistEditor] Error al crear dialogo: {e}")
+            return
+
+        def on_response(dialog, response_id):
+            dialog.destroy()
+            if response_id == Gtk.ResponseType.ACCEPT:
+                files = dialog.get_files()
+                for f in files:
+                    filepath = f.get_path()
+                    if filepath:
+                        try:
+                            self._service.add_item(
+                                playlist_id=self._dto.id,
+                                item_type="track",
+                                filepath=filepath,
+                            )
+                        except Exception as e:
+                            print(f"[PlaylistEditor] Error al añadir pista: {e}")
+                self.refresh()
+
+        dialog.connect("response", on_response)
+        dialog.show()
 
     def _add_folder(self, _btn):
         """Dialogo para seleccionar una carpeta de audio."""
-        root = self.get_root() or None
-        folders = open_file_chooser(root, "Seleccionar carpeta de audio",
-                                    action=Gtk.FileChooserAction.SELECT_FOLDER)
-        for folder in folders:
-            try:
-                self._service.add_item(
-                    playlist_id=self._dto.id,
-                    item_type="folder",
-                    folder_path=folder,
-                )
-            except Exception as e:
-                print(f"[PlaylistEditor] Error al anadir carpeta: {e}")
-        if folders:
-            self.refresh()
+        parent = self.get_root() if self.get_root() else None
+
+        # FileChooserNative pode fallar silenciosamente via XDG Portal,
+        # usamos FileChooserDialog como fallback (compatible con GTK 4.6)
+        dialog = None
+        try:
+            dialog = Gtk.FileChooserDialog(
+                title="Seleccionar carpeta de audio",
+                transient_for=parent,
+                modal=True,
+                action=Gtk.FileChooserAction.SELECT_FOLDER,
+            )
+            dialog.add_button("_Cancelar", Gtk.ResponseType.CANCEL)
+            dialog.add_button("_Seleccionar", Gtk.ResponseType.ACCEPT)
+        except Exception as e:
+            print(f"[PlaylistEditor] Error al crear dialogo carpeta: {e}")
+            return
+
+        def on_response(dialog, response_id):
+            dialog.destroy()
+            if response_id == Gtk.ResponseType.ACCEPT:
+                folder = dialog.get_file()
+                if folder:
+                    path = folder.get_path()
+                    if path:
+                        try:
+                            # Registrar carpeta en el sistema anti-repeticion
+                            count = FolderScanner.register_folder(path)
+                            print(f"[PlaylistEditor] Registrados {count} archivos nuevos en carpeta")
+
+                            # Añadir la carpeta como item de playlist
+                            self._service.add_item(
+                                playlist_id=self._dto.id,
+                                item_type="folder",
+                                folder_path=path,
+                            )
+                            self.refresh()
+                        except Exception as e:
+                            print(f"[PlaylistEditor] Error al añadir carpeta: {e}")
+
+        dialog.connect("response", on_response)
+        dialog.show()
 
     def _add_playlist(self, _btn):
         """Dialogo para seleccionar una playlist existente como item."""
@@ -283,18 +338,18 @@ class PlaylistEditor(Gtk.Box):
             self._show_error("No hay otras playlists disponibles para anidar")
             return
 
-        dialog = Gtk.Window(
-            transient_for=self.get_root() if self.get_root() else None,
-            modal=True,
-            title="Añadir Playlist",
-            default_width=380,
-            default_height=200,
-        )
-        dialog.set_resizable(False)
+        dialog = Gtk.Window()
+        dialog.set_title("Añadir Playlist")
+        dialog.set_transient_for(self.get_root() if self.get_root() else None)
+        dialog.set_modal(True)
+        dialog.set_resizable(True)
+        dialog.set_default_size(400, -1)
+
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        box.set_margin_top(16)
-        box.set_margin_bottom(16)
+        box.set_margin_top(12)
+        box.set_margin_bottom(12)
         box.set_margin_start(16)
         box.set_margin_end(16)
 
@@ -312,24 +367,29 @@ class PlaylistEditor(Gtk.Box):
         combo.add_css_class("ra-combo")
         box.append(combo)
 
-        # Botons
-        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        btn_box.set_halign(Gtk.Align.END)
-        btn_box.set_margin_top(8)
+        main_box.append(box)
 
+        # Botóns
+        btn_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_bar.set_margin_top(8)
+        btn_bar.set_margin_bottom(8)
+        btn_bar.set_margin_start(16)
+        btn_bar.set_margin_end(16)
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        btn_bar.append(spacer)
         cancel_btn = Gtk.Button(label="Cancelar")
         cancel_btn.add_css_class("ra-button")
-        btn_box.append(cancel_btn)
+        btn_bar.append(cancel_btn)
+        save_btn = Gtk.Button(label="Añadir")
+        save_btn.add_css_class("ra-button-primary")
+        save_btn.add_css_class("ra-button")
+        btn_bar.append(save_btn)
+        main_box.append(btn_bar)
 
-        ok_btn = Gtk.Button(label="Engadir")
-        ok_btn.add_css_class("ra-button")
-        ok_btn.add_css_class("ra-button-primary")
-        btn_box.append(ok_btn)
-        box.append(btn_box)
+        dialog.set_child(main_box)
 
-        dialog.set_child(box)
-
-        def do_add():
+        def do_save():
             idx = combo.get_selected()
             if 0 <= idx < len(available):
                 selected = available[idx]
@@ -344,10 +404,8 @@ class PlaylistEditor(Gtk.Box):
                     self._show_error(f"Error al anadir playlist: {e}")
             dialog.destroy()
 
-        ok_btn.connect("clicked", lambda b: do_add())
         cancel_btn.connect("clicked", lambda b: dialog.destroy())
-        dialog.connect("close-request", lambda w: w.destroy())
-
+        save_btn.connect("clicked", lambda b: do_save())
         dialog.show()
 
     def _add_time_announce(self, _btn):
@@ -388,56 +446,25 @@ class PlaylistEditor(Gtk.Box):
 
     def _clear_all(self, _btn):
         """Confirmar vaciar toda la playlist."""
-        dialog = Gtk.Window(
+        dialog = Gtk.MessageDialog(
             transient_for=self.get_root() if self.get_root() else None,
             modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.YES_NO,
             title="Vaciar Playlist",
-            default_width=350,
-            default_height=160,
+            text=f"¿Seguro que quieres vaciar \"{self._dto.name}\"? Esta accion no se puede deshacer.",
         )
-        dialog.set_resizable(False)
 
-        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        main_box.set_margin_top(16)
-        main_box.set_margin_bottom(16)
-        main_box.set_margin_start(16)
-        main_box.set_margin_end(16)
-
-        msg = Gtk.Label(
-            label=f"¿Seguro que quieres vaciar \"{self._dto.name}\"?\nEsta accion no se puede deshacer."
-        )
-        msg.set_xalign(0)
-        main_box.append(msg)
-
-        # Botons
-        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        btn_box.set_halign(Gtk.Align.END)
-        btn_box.set_margin_top(8)
-
-        cancel_btn = Gtk.Button(label="Cancelar")
-        cancel_btn.add_css_class("ra-button")
-        btn_box.append(cancel_btn)
-
-        clear_btn = Gtk.Button(label="Vaciar")
-        clear_btn.add_css_class("ra-button-danger")
-        clear_btn.add_css_class("ra-button")
-        btn_box.append(clear_btn)
-        main_box.append(btn_box)
-
-        dialog.set_child(main_box)
-
-        def do_clear():
-            try:
-                self._service.clear_items(self._dto.id)
-                self.refresh()
-            except Exception as e:
-                self._show_error(f"Error al vaciar: {e}")
+        def on_response(dialog, response_id):
+            if response_id == Gtk.ResponseType.YES:
+                try:
+                    self._service.clear_items(self._dto.id)
+                    self.refresh()
+                except Exception as e:
+                    self._show_error(f"Error al vaciar: {e}")
             dialog.destroy()
 
-        clear_btn.connect("clicked", lambda b: do_clear())
-        cancel_btn.connect("clicked", lambda b: dialog.destroy())
-        dialog.connect("close-request", lambda w: w.destroy())
-
+        dialog.connect("response", on_response)
         dialog.show()
 
     def _show_error(self, message: str):
