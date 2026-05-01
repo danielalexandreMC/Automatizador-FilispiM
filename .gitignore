@@ -24,6 +24,8 @@ coverage.xml
 
 # Base de datos local (se crea en runtime en ~/.config/)
 *.db
+*.sqlite
+*.sqlite3
 
 # IDEs
 .vscode/
@@ -44,6 +46,32 @@ desktop.ini
 *.log
 logs/
 
-# Datos de la aplicación (se crean en runtime)
+# Datos de la aplicacion (se crean en runtime)
 # No versionar la base de datos ni los archivos descargados
-.venv/
+
+# ── Seguridad ──
+# Ficheiros de entorno con variables sensibles
+.env
+.env.*
+!.env.example
+
+# Chaves, tokens e credenciais
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+
+# Configuracions locais que poden conter datos sensibles
+*.local
+*.secret
+credentials.json
+secrets.json
+tokens.json
+
+# Datos do usuario (poden conter rutas locais privadas)
+radio_automator_data/
+downloads/
