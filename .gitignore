@@ -75,3 +75,28 @@ tokens.json
 # Datos do usuario (poden conter rutas locais privadas)
 radio_automator_data/
 downloads/
+
+# Copias de seguridade e ficheiros temporais
+*_out.py
+*.bak*
+*.backup
+*.tmp
+
+# Audio de proba (non subir arquivos multimedia)
+*.mp3
+*.ogg
+*.flac
+*.wav
+*.m4a
+
+# Imaxes do usuario (logo persoal, etc.)
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.svg
+!docs/img/
+
+# Scripts de diagnostico
+test_audio_*.py
+test_gtk4_*.py
