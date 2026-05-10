@@ -26,7 +26,7 @@ SHORTCUT_GROUPS = [
     {
         "title": "Transporte de audio",
         "shortcuts": [
-            ("Ctrl + Espacio", "Reproducir / Pausar"),
+            ("Espacio", "Reproducir / Pausar"),
             ("Ctrl + Derecha", "Pista siguiente"),
             ("Ctrl + Izquierda", "Pista anterior"),
             ("Ctrl + S", "Detener"),
@@ -58,6 +58,7 @@ class ShortcutsWindow(Gtk.Window):
         # Layout principal con scroll
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_overlay_scrolling(False)
         scrolled.set_child(self._build_content())
         self.set_child(scrolled)
 

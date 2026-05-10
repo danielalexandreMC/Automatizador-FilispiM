@@ -152,13 +152,14 @@ class RadioAutomator(Gtk.Application):
         sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
         main_box.append(sep)
 
-        # Area de contenido con Stack
+        # Layout: Reprodutor arriba, paneles abaixo, status bar ao fondo
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
-        # Barra de transporte (encima del contenido)
+        # Barra de transporte (ARRIBA, encima do contido dos paneles)
         self._transport_bar = TransportBar()
         content_box.append(self._transport_bar)
 
+        # Area de contenido con Stack
         self._stack = Gtk.Stack()
         self._stack.set_transition_type(Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
         self._stack.set_hexpand(True)
@@ -175,11 +176,19 @@ class RadioAutomator(Gtk.Application):
         self._panels["config"] = ConfigPanel()
 
         # Anadir paneles al stack
+        # A parrilla xestiona o seu propio scroll interno; os demais envolvemos
         for panel_id, panel in self._panels.items():
-            scroll = Gtk.ScrolledWindow()
-            scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-            scroll.set_child(panel)
-            self._stack.add_named(scroll, panel_id)
+            if panel_id == "parrilla":
+                # A parrilla ten o seu propio ScrolledWindow interno
+                panel.set_hexpand(True)
+                panel.set_vexpand(True)
+                self._stack.add_named(panel, panel_id)
+            else:
+                scroll = Gtk.ScrolledWindow()
+                scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+                scroll.set_overlay_scrolling(False)
+                scroll.set_child(panel)
+                self._stack.add_named(scroll, panel_id)
 
         content_box.append(self._stack)
 
@@ -221,9 +230,6 @@ class RadioAutomator(Gtk.Application):
 
         # Iniciar scheduler de podcasts
         get_podcast_scheduler().start()
-
-        # Suscribir a cambios de configuracion (logo, nome emisora, etc.)
-        get_event_bus().subscribe("config.saved", self._on_config_saved)
 
         # Notificacion de bienvenida
         self._notification_service.info(
@@ -312,6 +318,7 @@ class RadioAutomator(Gtk.Application):
 
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_overlay_scrolling(False)
         scroll.set_child(editor)
         self._stack.add_named(scroll, "playlists")
 
@@ -326,6 +333,7 @@ class RadioAutomator(Gtk.Application):
             )
             new_scroll = Gtk.ScrolledWindow()
             new_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            new_scroll.set_overlay_scrolling(False)
             new_scroll.set_child(self._panels["playlists"])
             self._stack.add_named(new_scroll, "playlists")
             self._on_navigate("playlists")
@@ -376,23 +384,6 @@ class RadioAutomator(Gtk.Application):
             if info and info.title:
                 self._update_window_title(info.title, info.artist or "")
                 self._statusbar.set_playback_status("Reproduciendo")
-
-        try:
-            GLib.idle_add(_update)
-        except Exception:
-            _update()
-
-    def _on_config_saved(self, event):
-        """Manexar cambios de configuracion (logo, nome emisora)."""
-        def _update():
-            # Actualizar titulo da ventá
-            self._update_window_title()
-            # Actualizar logo no sidebar
-            try:
-                logo_path = get_config().get("logo_path", "")
-                self._sidebar.update_logo(logo_path)
-            except Exception:
-                pass
 
         try:
             GLib.idle_add(_update)

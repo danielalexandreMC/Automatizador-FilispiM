@@ -48,8 +48,6 @@ def _init_engine():
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.execute("PRAGMA wal_autocheckpoint=100")
         cursor.close()
 
     _session_factory = sessionmaker(bind=_engine, expire_on_commit=False)
@@ -78,10 +76,12 @@ def reset_engine():
 
 
 # Propiedades de conveniencia para compatibilidad con el resto del codigo
+@property
 def DATA_DIR() -> Path:
     return _get_data_dir()
 
 
+@property
 def DB_PATH() -> Path:
     return _get_data_dir() / "radio_automator.db"
 
@@ -335,16 +335,7 @@ class SystemConfig(Base):
 
 def init_db():
     """Crear todas las tablas y datos iniciales."""
-    engine = get_engine()
-    Base.metadata.create_all(engine)
-    # Forzar checkpoint para que os datos sexan visibles externamente
-    try:
-        from sqlalchemy import text
-        with engine.connect() as conn:
-            conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
-            conn.commit()
-    except Exception:
-        pass
+    Base.metadata.create_all(get_engine())
     _seed_continuity()
     _seed_default_config()
 
@@ -384,6 +375,9 @@ def _seed_default_config():
         "station_name": "Mi Emisora",
         "music_folder": str(Path.home() / "Music"),
         "theme": "dark",
+        "time_announce_enabled": "false",
+        "time_announce_folder": "",
+        "time_announce_interval": "60",
     }
     session = get_session()
     try:

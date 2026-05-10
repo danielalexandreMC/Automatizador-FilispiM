@@ -120,6 +120,7 @@ class PlaylistsPanel(PanelContainer):
         # Contenedor con scroll
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_overlay_scrolling(False)
         scroll.set_vexpand(True)
 
         self._list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)

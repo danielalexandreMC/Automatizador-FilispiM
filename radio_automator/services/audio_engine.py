@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import math
 import threading
+import time as _time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -155,6 +156,18 @@ class AudioEngine:
 
         # Fade timeout IDs (para cancelar en stop/cleanup)
         self._fade_timeout_ids: list[int] = []
+
+        # Anti-bucle: contador de EOS rápidos consecutivos por ficheiro.
+        # Se o MESMO ficheiro produce EOS máis de 3 veces seguidas en
+        # menos de 5 segundos, considérase roto e salta.
+        # Isto permite ficheiros curtos legítimos (HRS ~870ms, MIN ~1s)
+        # mentres protexe contra ficheiros realmente rotos que causarían
+        # bucle infinito. O bucle orixinal por race condition xa está
+        # resolto con _announce_pending en AutomationEngine.
+        self._pipeline_start_time: float = 0.0
+        self._rapid_eos_counter: int = 0  # Contador de EOS rápidos
+        self._rapid_eos_file: str = ""    # Ficheiro que causou o último EOS rápido
+        self._rapid_eos_start: float = 0.0  # Cando empezou a conta
 
         # GStreamer availability
         self._gst_available = False
@@ -442,6 +455,9 @@ class AudioEngine:
             )
 
             self._set_state(PlaybackState.PLAYING)
+
+            # Gardar timestamp de inicio (para anti-bucle EOS)
+            self._pipeline_start_time = _time.monotonic()
 
             # Iniciar polling de posicion
             self._start_position_poll()
@@ -782,6 +798,10 @@ class AudioEngine:
 
         Executase no fío de GStreamer. Todo o manipulado de pipeline
         e UI se despacha via GLib.idle_add.
+
+        Anti-bucle: soamente salta on_track_finished se o MESMO ficheiro
+        produce EOS rápido máis de 3 veces en menos de 5 segundos.
+        Ficheiros curtos legítimos (HRS ~870ms) non se bloquean.
         """
         # Filtrar: soamente mensaxes do pipeline actual
         try:
@@ -792,7 +812,50 @@ class AudioEngine:
             return
 
         info = self._track_info
-        print(f"[AudioEngine] Fin de pista: {info.title}")
+        now = _time.monotonic()
+        elapsed_ms = (now - self._pipeline_start_time) * 1000
+
+        # Anti-bucle: contar EOS rápidos do mesmo ficheiro
+        if elapsed_ms < 2000:  # menos de 2 segundos = potencialmente roto
+            if self._rapid_eos_file == info.filepath:
+                self._rapid_eos_counter += 1
+            else:
+                self._rapid_eos_file = info.filepath
+                self._rapid_eos_counter = 1
+                self._rapid_eos_start = now
+
+            # Se estamos no mesmo período de 5 segundos
+            window_elapsed = (now - self._rapid_eos_start) * 1000
+            if window_elapsed > 5000:
+                # Reiniciar ventá
+                self._rapid_eos_counter = 1
+                self._rapid_eos_start = now
+
+            if self._rapid_eos_counter > 3:
+                # O MESMO ficheiro fallou 3+ veces en < 5s -> roto
+                print(f"[AudioEngine] Fin de pista: {info.title} "
+                      f"({elapsed_ms:.0f}ms) - BLOQUEADO: mesmo ficheiro "
+                      f"falhou {self._rapid_eos_counter} veces seguidas")
+                self._rapid_eos_counter = 0
+                self._rapid_eos_file = ""
+                if self._gst_available:
+                    def _debounce_reset():
+                        self._stop_position_poll()
+                        self._stop_vu_poll()
+                        self._set_state(PlaybackState.STOPPED)
+                    self._GLib.idle_add(_debounce_reset)
+                return
+            else:
+                # Ficheiro curto pero non repetido -> permitir (HRS, MIN)
+                print(f"[AudioEngine] Fin de pista: {info.title} "
+                      f"({elapsed_ms:.0f}ms) - curto pero permitido "
+                      f"(rapid_eos={self._rapid_eos_counter}/3)")
+        else:
+            # Pista normal (> 2s), reiniciar contador
+            self._rapid_eos_counter = 0
+            self._rapid_eos_file = ""
+
+        print(f"[AudioEngine] Fin de pista: {info.title} ({elapsed_ms/1000:.1f}s)")
 
         # Parar polling de posicion e VU (xa non hai pista)
         # Despachado ao fío principal para evitar problemas de threading

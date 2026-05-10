@@ -134,8 +134,7 @@ class PlayQueue:
     @property
     def mode_label(self) -> str:
         """Etiqueta legible do modo actual."""
-        labels = {"loop": "Loop", "single": "Unha vez"}
-        return labels.get(self._mode, self._mode)
+        return "Bucle" if self._mode == "loop" else "Unha vez"
 
     @property
     def progress_text(self) -> str:
@@ -349,8 +348,19 @@ class PlayQueue:
         """
         Callback para cuando termina una pista.
         Avanza automaticamente a la siguiente.
-        Non usa crossfade porque a pista xa rematou (EOS).
+        Se a automatizacion esta activa, o AutomationEngine encargase
+        de avanzar a cola. Este metodo so se usa para reproduccion manual.
         """
+        # Se a automatizacion esta activa, non avanzar a cola aqui.
+        # O AutomationEngine encargase de avanzar.
+        try:
+            from radio_automator.services.automation_engine import get_automation_engine
+            ae = get_automation_engine()
+            if ae.is_active:
+                return
+        except Exception:
+            pass
+
         next_item = self.play_next()
         if next_item is None:
             # Cola terminada, parar
@@ -358,12 +368,17 @@ class PlayQueue:
             engine.stop()
             return
 
-        # Reproducir siguiente pista (sin crossfade - a pista anterior xa rematou)
+        # Reproducir siguiente pista
         engine = get_audio_engine()
         if next_item.is_streaming:
             engine.play_stream(next_item.filepath)
         else:
-            engine.play_file(next_item.filepath)
+            # Intentar crossfade
+            if (engine.state.value == "playing" and
+                    not engine.track_info.is_streaming):
+                engine.play_file_with_crossfade(next_item.filepath)
+            else:
+                engine.play_file(next_item.filepath)
 
     # ── Resolucion de playlists ──
 
@@ -413,9 +428,17 @@ class PlayQueue:
                     result.extend(nested)
 
             elif item.item_type == "time_announce":
-                # Los anuncios de hora se insertan como marcadores
-                # (se manejaran en la Fase 5 - Parrilla)
-                pass
+                # Insercion horaria: engadir como placeholder que se
+                # resolvera a hora real cando a cola chegue a este punto.
+                # _play_queue_item detecta "__time_announce__" e chama
+                # _play_time_announce_from_queue para reproducir os
+                # audios da hora actual.
+                result.append(QueueItem(
+                    filepath="__time_announce__",
+                    title="⏰ Insercion Horaria",
+                    source="time_announce",
+                    source_id=playlist_id,
+                ))
 
         return result
 

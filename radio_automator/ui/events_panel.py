@@ -109,6 +109,7 @@ class EventsPanel(PanelContainer):
         # Lista con scroll
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_overlay_scrolling(False)
         scroll.set_vexpand(True)
 
         self._list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -160,6 +161,7 @@ class EventsPanel(PanelContainer):
         # Area de contido con scroll (sen limite de altura)
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_overlay_scrolling(False)
         scroll.set_min_content_height(400)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)

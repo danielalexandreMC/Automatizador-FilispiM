@@ -27,8 +27,8 @@ class ContinuidadPanel(Gtk.Box):
 
         # Header informativo
         header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        header.set_margin_start(20)
-        header.set_margin_end(20)
+        header.set_margin_start(28)
+        header.set_margin_end(28)
         header.set_margin_top(20)
         header.set_margin_bottom(8)
 

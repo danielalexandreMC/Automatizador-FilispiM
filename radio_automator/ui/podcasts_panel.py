@@ -151,6 +151,7 @@ class EpisodesView(Gtk.Box):
         # Lista de episodios con scroll
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_overlay_scrolling(False)
         scroll.set_vexpand(True)
 
         self._list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
@@ -265,6 +266,7 @@ class PodcastsPanel(PanelContainer):
         # Lista con scroll
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_overlay_scrolling(False)
         scroll.set_vexpand(True)
 
         self._feeds_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -367,6 +369,7 @@ class PodcastsPanel(PanelContainer):
         # Lista con scroll
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_overlay_scrolling(False)
         scroll.set_vexpand(True)
         self._feeds_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         scroll.set_child(self._feeds_list)
@@ -444,13 +447,13 @@ class PodcastsPanel(PanelContainer):
         is_edit = edit_dto is not None
         title = f"Editar: {edit_dto.name}" if is_edit else "Nuevo Feed RSS"
 
-        dialog = Gtk.MessageDialog(
+        dialog = Gtk.Window(
+            title=title,
             transient_for=self.get_root() if self.get_root() else None,
             modal=True,
-            message_type=Gtk.MessageType.QUESTION,
-            buttons=Gtk.ButtonsType.OK_CANCEL,
-            title=title,
+            resizable=False,
         )
+        dialog.set_default_size(450, 320)
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         box.set_margin_top(12)
@@ -507,11 +510,14 @@ class PodcastsPanel(PanelContainer):
         selected_folder = {"path": edit_dto.folder_path if is_edit else ""}
 
         def on_browse(btn):
-            dlg = Gtk.FileChooserNative(
+            dlg = Gtk.FileChooserDialog(
                 title="Seleccionar carpeta de descarga",
-                action=Gtk.FileChooserAction.SELECT_FOLDER,
                 transient_for=self.get_root() if self.get_root() else None,
+                modal=True,
+                action=Gtk.FileChooserAction.SELECT_FOLDER,
             )
+            dlg.add_button("_Cancelar", Gtk.ResponseType.CANCEL)
+            dlg.add_button("_Seleccionar", Gtk.ResponseType.ACCEPT)
 
             def on_resp(d, r):
                 if r == Gtk.ResponseType.ACCEPT:
@@ -576,51 +582,67 @@ class PodcastsPanel(PanelContainer):
         max_box.append(no_limit_label)
         box.append(max_box)
 
+        # Botons Gardar / Cancelar
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        btn_box.set_margin_top(12)
+        btn_box.set_halign(Gtk.Align.END)
+
+        cancel_btn = Gtk.Button(label="Cancelar")
+        cancel_btn.add_css_class("ra-button")
+        btn_box.append(cancel_btn)
+
+        save_btn = Gtk.Button(label="Gardar")
+        save_btn.add_css_class("ra-button-primary")
+        save_btn.add_css_class("ra-button")
+        btn_box.append(save_btn)
+
+        box.append(btn_box)
+
         dialog.set_child(box)
         name_entry.grab_focus()
 
-        def on_response(dialog, response_id):
-            if response_id == Gtk.ResponseType.OK:
-                name = name_entry.get_text().strip()
-                url = url_entry.get_text().strip()
-                folder = selected_folder["path"].strip()
-                mode = "replace" if replace_btn.get_active() else "accumulate"
-                max_ep = int(max_spin.get_value())
+        def do_save():
+            name = name_entry.get_text().strip()
+            url = url_entry.get_text().strip()
+            folder = selected_folder["path"].strip()
+            mode = "replace" if replace_btn.get_active() else "accumulate"
+            max_ep = int(max_spin.get_value())
 
-                if not name:
-                    self._show_error("El nombre es obligatorio")
-                    return
-                if not url:
-                    self._show_error("La URL del feed es obligatoria")
-                    return
-                if not folder:
-                    self._show_error("Selecciona una carpeta de descarga")
-                    return
+            if not name:
+                self._show_error("El nombre es obligatorio")
+                return
+            if not url:
+                self._show_error("La URL del feed es obligatoria")
+                return
+            if not folder:
+                self._show_error("Selecciona una carpeta de descarga")
+                return
 
-                try:
-                    if is_edit:
-                        self._service.update_feed(
-                            feed_id=edit_dto.id,
-                            name=name, url=url,
-                            folder_path=folder,
-                            mode=mode,
-                            max_episodes=max_ep,
-                        )
-                    else:
-                        self._service.add_feed(
-                            name=name, url=url,
-                            folder_path=folder,
-                            mode=mode,
-                            max_episodes=max_ep,
-                        )
-                    self.refresh()
-                except FeedLimitError as e:
-                    self._show_error(str(e))
-                except PodcastError as e:
-                    self._show_error(f"Error: {e}")
+            try:
+                if is_edit:
+                    self._service.update_feed(
+                        feed_id=edit_dto.id,
+                        name=name, url=url,
+                        folder_path=folder,
+                        mode=mode,
+                        max_episodes=max_ep,
+                    )
+                else:
+                    self._service.add_feed(
+                        name=name, url=url,
+                        folder_path=folder,
+                        mode=mode,
+                        max_episodes=max_ep,
+                    )
+                self.refresh()
+            except FeedLimitError as e:
+                self._show_error(str(e))
+            except PodcastError as e:
+                self._show_error(f"Error: {e}")
             dialog.destroy()
 
-        dialog.connect("response", on_response)
+        cancel_btn.connect("clicked", lambda b: dialog.destroy())
+        save_btn.connect("clicked", lambda b: do_save())
         dialog.show()
 
     def _show_edit_dialog(self, dto: FeedDTO):

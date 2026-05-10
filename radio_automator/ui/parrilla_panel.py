@@ -22,11 +22,15 @@ from radio_automator.core.database import get_session, RadioEvent
 
 
 # ═══════════════════════════════════════
-# Constantes
+# Bloque de evento en el grid
 # ═══════════════════════════════════════
 
-HOUR_HEIGHT = 50  # 50px por hora (fixo, para scroll consistente)
-HOUR_COL_WIDTH = 70  # Ancho da columna de horas (maior para legibilidade)
+class EventBlock:
+    """Datos de un evento para o grid semanal (sen widget visual)."""
+
+    def __init__(self, grid_event: GridEvent, on_click=None, on_edit=None):
+        self._ge = grid_event
+        self._on_edit = on_edit
 
 
 # ═══════════════════════════════════════
@@ -34,11 +38,7 @@ HOUR_COL_WIDTH = 70  # Ancho da columna de horas (maior para legibilidade)
 # ═══════════════════════════════════════
 
 class DayColumn(Gtk.DrawingArea):
-    """Columna vertical dun dia: debuxa o grid horario e os bloques de eventos.
-
-    Numa parrilla de radio, cada evento ocupa o ancho COMPLETO da columna.
-    Non hai eventos superpostos.
-    """
+    """Columna vertical dun dia: debuxa o grid horario e os bloques de eventos."""
 
     def __init__(self, day_index: int, events: list[GridEvent],
                  on_edit_event=None):
@@ -50,8 +50,7 @@ class DayColumn(Gtk.DrawingArea):
 
         self.set_vexpand(True)
         self.set_hexpand(True)
-        # MINIMO para que ScrolledWindow faga scroll
-        self.set_size_request(80, HOUR_END * HOUR_HEIGHT)
+        self.set_content_width(120)
 
         self.set_draw_func(self._on_draw)
 
@@ -69,7 +68,7 @@ class DayColumn(Gtk.DrawingArea):
                 return
 
     def _on_draw(self, drawing_area, cr, width, height):
-        """Debuxar o grid horario e os bloques de eventos a ancho completo."""
+        """Debuxar o grid horario e os bloques de eventos."""
         self._event_rects = []
 
         # Fondo
@@ -77,51 +76,46 @@ class DayColumn(Gtk.DrawingArea):
         cr.rectangle(0, 0, width, height)
         cr.fill()
 
-        # Lineas horarias completas (cada hora)
+        # Lineas horarias completas
         cr.set_source_rgb(0.25, 0.25, 0.25)
         cr.set_line_width(0.5)
         for h in range(HOUR_START, HOUR_END + 1):
-            y = h * HOUR_HEIGHT
+            y = (h / 24.0) * height
             cr.move_to(0, y)
             cr.line_to(width, y)
             cr.stroke()
 
-        # Lineas de media hora (mais tenues)
-        cr.set_source_rgb(0.20, 0.20, 0.20)
+        # Lineas de media hora
+        cr.set_source_rgb(0.22, 0.22, 0.22)
         cr.set_line_width(0.3)
         for h in range(HOUR_START, HOUR_END):
-            y = (h + 0.5) * HOUR_HEIGHT
+            y = ((h + 0.5) / 24.0) * height
             cr.move_to(0, y)
             cr.line_to(width, y)
             cr.stroke()
 
-        # Separador dereito entre columnas de dias
+        # Separador dereito entre columnas
         cr.set_source_rgb(0.20, 0.20, 0.20)
         cr.set_line_width(1.0)
         cr.move_to(width - 0.5, 0)
         cr.line_to(width - 0.5, height)
         cr.stroke()
 
-        # ── Bloques de Continuidad nos ocos horarios ──
-        self._draw_continuity_blocks(cr, width)
-
-        # Debuxar bloques de eventos a ancho completo
+        # Debuxar bloques de eventos
         margin = 2
-        pad = 1
         for ge in self._events:
-            # Posicion vertical: minutos a pixels usando HOUR_HEIGHT fixo
-            top_px = (ge.start_minutes / 60.0) * HOUR_HEIGHT
-            h_px = max((ge.duration_minutes / 60.0) * HOUR_HEIGHT, 18)
+            top_px = (ge.start_minutes / (24 * 60)) * height
+            h_px = max((ge.duration_minutes / (24 * 60)) * height, 20)
 
-            x = margin + pad
-            w = width - margin * 2 - pad * 2
+            x = margin
             y = top_px
+            w = width - margin * 2
             h = h_px
 
             # Gardar rect para deteccion de click
             self._event_rects.append((ge, x, y, w, h))
 
-            # Cor e bordo segun estado
+            # Cor e bordo
             if ge.is_now_playing:
                 bg_r, bg_g, bg_b = 0.898, 0.224, 0.208
                 br, bg_, bb = 0.775, 0.157, 0.157
@@ -159,7 +153,7 @@ class DayColumn(Gtk.DrawingArea):
                 text_x = x + 6
                 text_y = y + 14
 
-                # Nome do evento
+                # Nome
                 cr.set_source_rgb(1.0, 1.0, 1.0)
                 cr.select_font_face("sans-serif", 0, 1)
                 cr.set_font_size(9)
@@ -169,7 +163,7 @@ class DayColumn(Gtk.DrawingArea):
                 cr.move_to(text_x, text_y)
                 cr.show_text(name)
 
-                # Hora do evento (inicio - fin)
+                # Hora
                 if h > 35:
                     cr.set_source_rgb(0.7, 0.7, 0.7)
                     cr.select_font_face("sans-serif", 0, 0)
@@ -200,119 +194,13 @@ class DayColumn(Gtk.DrawingArea):
         cr.arc(x + r, y + r, r, 3.1416, 4.7124)
         cr.close_path()
 
-    def _draw_dashed_rounded_rect(self, cr, x, y, w, h, r):
-        """Debuxar rectangulo con bordes redondeados e liña punteada."""
-        cr.set_dash([4, 3])
-        self._rounded_rect(cr, x, y, w, h, r)
-        cr.stroke()
-        cr.set_dash([])
-
-    def _draw_continuity_blocks(self, cr, width):
-        """Debuxar bloques sutiles de Continuidad nos ocos entre eventos.
-
-        Identifica os periodos sen eventos programados e encheos
-        cun bloque visual que indica que a Continuidad esta soando.
-        """
-        if not self._events:
-            # Non hai eventos: toda a columna e Continuidad
-            self._draw_single_cont_block(
-                cr, width, 0, HOUR_END * HOUR_HEIGHT
-            )
-            return
-
-        margin = 2
-        pad = 1
-        gaps = []
-        day_start = 0  # minutos
-        day_end = HOUR_END * 60  # 24h en minutos
-
-        # Oco antes do primeiro evento
-        first_end = self._events[0].start_minutes
-        if first_end > 0:
-            gaps.append((day_start, first_end))
-
-        # Ocos entre eventos
-        for i in range(len(self._events) - 1):
-            ev_current = self._events[i]
-            ev_next = self._events[i + 1]
-            gap_start = ev_current.start_minutes + ev_current.duration_minutes
-            gap_end = ev_next.start_minutes
-            if gap_end > gap_start:
-                gaps.append((gap_start, gap_end))
-
-        # Oco despoids do ultimo evento
-        last = self._events[-1]
-        last_end = last.start_minutes + last.duration_minutes
-        if last_end < day_end:
-            gaps.append((last_end, day_end))
-
-        # Debuxar cada oco
-        for gap_start_min, gap_end_min in gaps:
-            y_px = (gap_start_min / 60.0) * HOUR_HEIGHT
-            h_px = ((gap_end_min - gap_start_min) / 60.0) * HOUR_HEIGHT
-            x = margin + pad
-            w = width - margin * 2 - pad * 2
-
-            if h_px < 6:
-                # Oco demasiado pequeno, non debuxar nada
-                continue
-
-            self._draw_single_cont_block(cr, width, y_px, h_px)
-
-    def _draw_single_cont_block(self, cr, width, y, h):
-        """Debuxar un unico bloque de Continuidad na posicion dada."""
-        margin = 2
-        pad = 1
-        x = margin + pad
-        w = width - margin * 2 - pad * 2
-
-        # Fondo moi subtil (lixeiramente diferente do fondo do grid)
-        cr.set_source_rgba(0.22, 0.25, 0.20, 0.35)
-        self._rounded_rect(cr, x, y, w, h, 4)
-        cr.fill()
-
-        # Bordo punteado verde escuro
-        cr.set_source_rgb(0.30, 0.38, 0.28)
-        cr.set_line_width(0.8)
-        self._draw_dashed_rounded_rect(cr, x, y, w, h, 4)
-
-        # Icona e texto (so se hai espazo suficiente)
-        if h > 20:
-            # Icona pequena
-            cr.set_source_rgb(0.40, 0.50, 0.38)
-            cr.select_font_face("sans-serif", 0, 0)
-            cr.set_font_size(8)
-
-            # Texto centrado vertical e horizontalmente
-            text = "\u21BB Continuidad"
-            cr.set_source_rgb(0.42, 0.52, 0.40)
-            cr.set_font_size(8)
-            text_x = x + w / 2
-            text_y = y + h / 2 + 3
-
-            # Calcular anchura do texto para centrar
-            (t_w, _) = cr.text_extents(text)[:2]
-            cr.move_to(text_x - t_w / 2, text_y)
-            cr.show_text(text)
-
-            # Se o bloque e grande, amosar tamien o horario
-            if h > 40:
-                h_start = (y / HOUR_HEIGHT) * 60
-                h_end = ((y + h) / HOUR_HEIGHT) * 60
-                time_str = f"{int(h_start // 60):02d}:{int(h_start % 60):02d} - {int(h_end // 60):02d}:{int(h_end % 60):02d}"
-                cr.set_source_rgb(0.35, 0.43, 0.33)
-                cr.set_font_size(7)
-                (t_w2, _) = cr.text_extents(time_str)[:2]
-                cr.move_to(text_x - t_w2 / 2, text_y + 12)
-                cr.show_text(time_str)
-
 
 # ═══════════════════════════════════════
 # Panel principal de la Parrilla
 # ═══════════════════════════════════════
 
 class ParrillaPanel(PanelContainer):
-    """Panel de la parrilla semanal."""
+    """Panel de la parrilla semanal (interfaz tipo Google Calendar)."""
 
     def __init__(self):
         super().__init__(
@@ -326,56 +214,51 @@ class ParrillaPanel(PanelContainer):
         self._show_today_only = False
         self._refresh_timer = None
 
-        # Boton de novo evento
+        # Boton de nuevo evento
         if self.add_button:
             self.add_button.set_sensitive(True)
-            self.add_button.set_tooltip_text("Crear novo evento programado")
+            self.add_button.set_tooltip_text("Crear nuevo evento programado")
             self.add_button.connect("clicked", self._on_create_event)
-
-        # Referencia ao boton Hoy/Semana para poder cambiar o label
-        self._today_btn = None
 
         self._build_ui()
         self.refresh()
 
     def _build_ui(self):
-        """Construir la interfaz del panel.
-
-        Layout:
-          toolbar (fixo)
-          conflict_label (fixo)
-          header_dias (fixo, fora do scroll)
-          ScrolledWindow -> grid (hora labels + columnas de dia, con scroll vertical)
-        """
+        """Construir la interfaz del panel."""
         # Toolbar: navegacion de semanas
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         toolbar.set_margin_bottom(12)
 
-        prev_btn = Gtk.Button(label="<-")
+        # Boton semana anterior
+        prev_btn = Gtk.Button(label="←")
         prev_btn.add_css_class("ra-button")
         prev_btn.add_css_class("ra-button-icon")
         prev_btn.set_tooltip_text("Semana anterior")
         prev_btn.connect("clicked", lambda b: self._change_week(-1))
         toolbar.append(prev_btn)
 
+        # Label semana actual
         self._week_label = Gtk.Label()
         self._week_label.add_css_class("ra-heading")
         self._week_label.set_halign(Gtk.Align.CENTER)
         toolbar.append(self._week_label)
 
-        next_btn = Gtk.Button(label="->")
+        # Boton semana siguiente
+        next_btn = Gtk.Button(label="→")
         next_btn.add_css_class("ra-button")
         next_btn.add_css_class("ra-button-icon")
         next_btn.set_tooltip_text("Semana siguiente")
         next_btn.connect("clicked", lambda b: self._change_week(1))
         toolbar.append(next_btn)
 
-        self._today_btn = Gtk.Button(label="Hoy")
-        self._today_btn.add_css_class("ra-button")
-        self._today_btn.add_css_class("ra-button-sm")
-        self._today_btn.connect("clicked", self._toggle_today)
-        toolbar.append(self._today_btn)
+        # Boton hoy
+        today_btn = Gtk.Button(label="Hoy")
+        today_btn.add_css_class("ra-button")
+        today_btn.add_css_class("ra-button-sm")
+        today_btn.connect("clicked", self._go_today)
+        toolbar.append(today_btn)
 
+        # Spacer
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
         toolbar.append(spacer)
@@ -388,32 +271,22 @@ class ParrillaPanel(PanelContainer):
         self._conflict_label.set_xalign(0)
         self.content.append(self._conflict_label)
 
-        # ── HEADER DOS DIAS (FIXO, fora do scroll) ──
-        self._day_header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        self._day_header_box.set_size_request(-1, 28)
-        # Espazo en branco para alinear coa columna de horas
-        hour_spacer = Gtk.Box()
-        hour_spacer.set_size_request(HOUR_COL_WIDTH, -1)
-        self._day_header_box.append(hour_spacer)
-        self.content.append(self._day_header_box)
+        # Contenedor con scroll para todo el grid
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_vexpand(True)
+        scroll.set_min_content_height(500)
+        self.content.append(scroll)
 
-        # Separador debaixo do header
-        header_sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-        self.content.append(header_sep)
-
-        # ── SCROLLED WINDOW (so o grid, co scroll vertical) ──
-        self._scroll = Gtk.ScrolledWindow()
-        self._scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self._scroll.set_vexpand(True)
-        self._scroll.set_hexpand(True)
-        self.content.append(self._scroll)
-
-        # Grid wrapper (dentro do scroll)
+        # Grid wrapper
         self._grid_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self._scroll.set_child(self._grid_wrapper)
+        self._grid_wrapper.set_hexpand(True)
+        self._grid_wrapper.set_vexpand(True)
+        scroll.set_child(self._grid_wrapper)
 
     def refresh(self):
         """Recargar la parrilla completa."""
+        # Calcular week_start a partir do offset (luns da semana correspondente)
         today = date.today()
         week_start = today - timedelta(days=today.weekday()) + timedelta(weeks=self._week_offset)
         week_data = self._service.get_events_for_week(week_start=week_start)
@@ -427,45 +300,37 @@ class ParrillaPanel(PanelContainer):
             f"{ws.day} {ws.strftime('%b')} - {we.day} {we.strftime('%b')} {we.year}"
         )
 
-        # Actualizar boton Hoy/Semana
-        if self._today_btn:
-            if self._show_today_only:
-                self._today_btn.set_label("Semana")
-            else:
-                self._today_btn.set_label("Hoy")
-
         # Info de conflictos
         if week_data.conflicts:
             n = len(week_data.conflicts)
-            self._conflict_label.set_label(f"! {n} conflicto(s) detectado(s)")
+            self._conflict_label.set_label(f"⚠ {n} conflicto(s) detectado(s)")
             self._conflict_label.add_css_class("ra-label-warning")
             self._conflict_label.remove_css_class("ra-label-dim")
             self._conflict_label.remove_css_class("ra-label-success")
         else:
             self._conflict_label.set_label(
-                f"OK {week_data.total_events} evento(s), sin conflictos"
+                f"✓ {week_data.total_events} evento(s), sin conflictos"
             )
             self._conflict_label.add_css_class("ra-label-success")
             self._conflict_label.remove_css_class("ra-label-dim")
             self._conflict_label.remove_css_class("ra-label-warning")
 
-        # ── Actualizar header dos dias (fixo) ──
-        self._update_day_header()
-
-        # ── Actualizar grid con scroll ──
         # Limpiar grid anterior
         while self._grid_wrapper.get_first_child():
             self._grid_wrapper.remove(self._grid_wrapper.get_first_child())
 
+        # Crear header de dias + horas
+        self._build_grid_header()
+
         # Crear grid con columnas de dia
         self._build_grid_columns(week_data)
 
-        # Now playing info
+        # Now playing info en toolbar o status
         if week_data.now_playing and week_data.now_playing.is_active:
             np = week_data.now_playing
             ev = np.event
             if ev:
-                info = f"- EN VIVO: {ev.name}"
+                info = f"● EN VIVO: {ev.name}"
                 if np.time_until_next:
                     mins = int(np.time_until_next.total_seconds() / 60)
                     info += f"  (siguiente en {mins} min)"
@@ -483,31 +348,25 @@ class ParrillaPanel(PanelContainer):
         except Exception:
             pass
 
-    def _update_day_header(self):
-        """Actualizar a cabecera dos nomes dos dias (fixa, fóra do scroll).
-
-        O header ten un espazo en branco de HOUR_COL_WIDTH px a esquerda
-        para alinear coa columna de horas do grid.
-        """
-        # Limpiar header actual (excepto o spacer da hora)
-        child = self._day_header_box.get_first_child()
-        while child:
-            next_child = child.get_next_sibling()
-            self._day_header_box.remove(child)
-            child = next_child
-
-        # Re-engadir o spacer da hora
-        hour_spacer = Gtk.Box()
-        hour_spacer.set_size_request(HOUR_COL_WIDTH, -1)
-        self._day_header_box.append(hour_spacer)
-
+    def _build_grid_header(self):
+        """Crear la fila de cabecera con nombres de dias."""
         if self._show_today_only:
             return
 
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        header.set_size_request(-1, 30)
+
+        # Columna de horas (espazo para alinear coa columna de labels)
+        hour_col = Gtk.Box()
+        hour_col.set_size_request(54, -1)
+        header.append(hour_col)
+
+        # Nombres de dias
         today_idx = datetime.now().weekday()
         for i in range(7):
             day_box = Gtk.Box()
             day_box.set_hexpand(True)
+            day_box.set_homogeneous(True)
 
             label = Gtk.Label(label=DAY_NAMES_SHORT[i])
             label.set_xalign(0.5)
@@ -516,7 +375,13 @@ class ParrillaPanel(PanelContainer):
                 label.add_css_class("ra-label-accent")
 
             day_box.append(label)
-            self._day_header_box.append(day_box)
+            header.append(day_box)
+
+        self._grid_wrapper.append(header)
+
+        # Separador
+        sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        self._grid_wrapper.append(sep)
 
     def _build_grid_columns(self, week_data):
         """Crear las columnas de dia con los bloques de eventos."""
@@ -525,14 +390,12 @@ class ParrillaPanel(PanelContainer):
         grid.set_vexpand(True)
         grid.set_hexpand(True)
 
-        # Columna de horas: DrawingArea DIRECTO (sen Box wrapper)
-        hour_da = Gtk.DrawingArea()
-        hour_da.set_size_request(HOUR_COL_WIDTH, HOUR_END * HOUR_HEIGHT)
-        hour_da.set_hexpand(False)
-        hour_da.set_draw_func(self._draw_hour_column)
-        grid.append(hour_da)
+        # Columna de horas
+        hour_column = self._create_hour_labels()
+        grid.append(hour_column)
 
         if self._show_today_only:
+            # Modo HOY: mostrar solo a columna de hoxe
             today_idx = datetime.now().weekday()
             col = DayColumn(
                 day_index=today_idx,
@@ -542,6 +405,7 @@ class ParrillaPanel(PanelContainer):
             col.set_hexpand(True)
             grid.append(col)
         else:
+            # Modo semanal: 7 columnas
             for day_idx in range(7):
                 col = DayColumn(
                     day_index=day_idx,
@@ -553,67 +417,39 @@ class ParrillaPanel(PanelContainer):
 
         self._grid_wrapper.append(grid)
 
-    def _draw_hour_column(self, drawing_area, cr, width, height):
-        """Debuxar a columna de horas (00:00h - 24:00h).
+    def _create_hour_labels(self) -> Gtk.Box:
+        """Crear la columna con etiquetas de hora."""
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        col.set_size_request(54, -1)
 
-        Usase como DrawingArea directo no grid para evitar problemas
-        de allocation con Box wrappers.
-        """
-        # Fondo escuro para a columna de horas
-        cr.set_source_rgb(0.13, 0.13, 0.13)
-        cr.rectangle(0, 0, width, height)
-        cr.fill()
+        da = Gtk.DrawingArea()
+        da.set_vexpand(True)
 
-        # Bordo dereito
-        cr.set_source_rgb(0.30, 0.30, 0.30)
-        cr.set_line_width(1.0)
-        cr.move_to(width - 0.5, 0)
-        cr.line_to(width - 0.5, height)
-        cr.stroke()
+        def on_draw(drawing_area, cr, width, height):
+            cr.set_source_rgb(0.43, 0.43, 0.43)  # #707070
+            cr.select_font_face("sans-serif", 0, 0)
+            cr.set_font_size(8)
 
-        # Fonte para as horas - maiores e mais brillantes
-        cr.select_font_face("sans-serif", 0, 0)
-        cr.set_font_size(10)
+            for h in range(HOUR_START, HOUR_END):
+                y = (h / 24.0) * height
+                text = f"{h:02d}:00"
+                # text_extents retorna (x_bearing, y_bearing, width, height, x_advance, y_advance)
+                extents = cr.text_extents(text)
+                text_h = extents[3]  # height real do texto
+                cr.move_to(4, y + text_h + 2)
+                cr.show_text(text)
 
-        for h in range(HOUR_START, HOUR_END):
-            y = h * HOUR_HEIGHT
+        da.set_draw_func(on_draw)
+        col.append(da)
+        return col
 
-            # Liña horizontal (coincide coas lineas do grid)
-            cr.set_source_rgb(0.25, 0.25, 0.25)
-            cr.set_line_width(0.5)
-            cr.move_to(0, y)
-            cr.line_to(width, y)
-            cr.stroke()
+    # ── Navegacion ──
 
-            # Etiqueta: aliñada a esquerda, texto brillante
-            cr.set_source_rgb(0.75, 0.75, 0.75)
-            text = f"{h:02d}:00h"
-            cr.move_to(4, y + 14)  # Aliñado esquerda, 14px abaixo da liña
-            cr.show_text(text)
-
-        # Liña final 24:00h
-        y = HOUR_END * HOUR_HEIGHT
-        cr.set_source_rgb(0.25, 0.25, 0.25)
-        cr.set_line_width(0.5)
-        cr.move_to(0, y)
-        cr.line_to(width, y)
-        cr.stroke()
-        # Etiqueta "24:00h"
-        cr.set_source_rgb(0.75, 0.75, 0.75)
-        cr.move_to(4, y + 14)
-        cr.show_text("24:00h")
-
-    # -- Navegacion --
-
-    def _toggle_today(self, _btn=None):
-        """Toggle entre vista de hoxe e vista semanal."""
-        if self._show_today_only:
-            self._show_today_only = False
-            self.refresh()
-        else:
-            self._week_offset = 0
-            self._show_today_only = True
-            self.refresh()
+    def _go_today(self, _btn=None):
+        """Volver a la semana actual y mostrar solo hoy."""
+        self._week_offset = 0
+        self._show_today_only = True
+        self.refresh()
 
     def _change_week(self, delta: int):
         """Cambiar a la semana anterior o siguiente."""
@@ -621,7 +457,7 @@ class ParrillaPanel(PanelContainer):
         self._show_today_only = False
         self.refresh()
 
-    # -- Acciones --
+    # ── Acciones ──
 
     def _on_create_event(self, _btn):
         """Crear un novo evento directamente."""
@@ -640,8 +476,7 @@ class ParrillaPanel(PanelContainer):
     def _show_event_dialog(self, edit_event=None, grid_event=None):
         """Dialogo para crear ou editar un evento."""
         is_edit = edit_event is not None
-        title = f"Editar: {edit_event.name}" if is_edit else "Novo Evento"
-        event_id = edit_event.id if is_edit else None  # Gardar o ID para usar noutra sesion
+        title = f"Editar: {edit_event.name}" if is_edit else "Nuevo Evento"
 
         dialog = Gtk.Window()
         dialog.set_title(title)
@@ -663,6 +498,7 @@ class ParrillaPanel(PanelContainer):
 
         # Nombre
         name_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        Gtk.Label(label="Nombre:").set_width_chars(14)
         name_label = Gtk.Label(label="Nombre:")
         name_label.set_width_chars(14)
         name_label.set_xalign(0)
@@ -769,7 +605,7 @@ class ParrillaPanel(PanelContainer):
         scroll.set_child(box)
         main_box.append(scroll)
 
-        # Botons
+        # Botóns
         btn_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         btn_bar.set_margin_top(8)
         btn_bar.set_margin_bottom(8)
@@ -797,16 +633,12 @@ class ParrillaPanel(PanelContainer):
             streaming_url = stream_entry.get_text().strip()
 
             if not name:
-                print("[Parrilla] ERRO: Nome baleiro, non se garda")
                 return
             if not start_time or len(start_time) != 5 or start_time[2] != ':':
-                print(f"[Parrilla] ERRO: Hora inicio invalida: '{start_time}'")
                 return
             if streaming_url and not end_time:
-                print("[Parrilla] ERRO: Streaming necesita hora de fin")
                 return
             if end_time and (len(end_time) != 5 or end_time[2] != ':'):
-                print(f"[Parrilla] ERRO: Hora fin invalida: '{end_time}'")
                 return
 
             pl_idx = playlist_combo.get_selected()
@@ -816,29 +648,21 @@ class ParrillaPanel(PanelContainer):
             pattern_map = {0: "weekly", 1: "daily", 2: "once", 3: "selected_days"}
             repeat_pattern = pattern_map.get(repeat_combo.get_selected(), "weekly")
 
-            # Abrir NOVA sesion para gardar.
-            # A sesion anterior pechouse en _on_edit_event, asi que
-            # edit_event esta "detached". Usamos event_id para buscar
-            # o obxeto na nova sesion.
             session = get_session()
             try:
-                if is_edit and event_id:
-                    event = session.get(RadioEvent, event_id)
-                    if event:
-                        print(f"[Parrilla] Gardando evento ID={event_id}: '{name}' {start_time}-{end_time}")
-                        event.name = name
-                        event.start_time = start_time
-                        event.end_time = end_time or None
-                        event.streaming_url = streaming_url or None
-                        event.playlist_id = playlist_id
-                        event.week_days = week_days
-                        event.repeat_pattern = repeat_pattern
-                    else:
-                        print(f"[Parrilla] ERRO: Non se atopo evento con ID {event_id}")
-                        session.close()
-                        return
+                if is_edit:
+                    # O obxecto edit_event foi cargado nunha sesion anterior
+                    # e quedou detached. Usamos merge() para re-adscribilo
+                    # a esta sesion antes de modificalo.
+                    merged_event = session.merge(edit_event)
+                    merged_event.name = name
+                    merged_event.start_time = start_time
+                    merged_event.end_time = end_time or None
+                    merged_event.streaming_url = streaming_url or None
+                    merged_event.playlist_id = playlist_id
+                    merged_event.week_days = week_days
+                    merged_event.repeat_pattern = repeat_pattern
                 else:
-                    print(f"[Parrilla] Creando novo evento: '{name}' {start_time}-{end_time}")
                     new_event = RadioEvent(
                         name=name, start_time=start_time,
                         end_time=end_time or None,
@@ -849,13 +673,10 @@ class ParrillaPanel(PanelContainer):
                     )
                     session.add(new_event)
                 session.commit()
-                print("[Parrilla] Commit OK, recargando parrilla...")
                 self.refresh()
             except Exception as e:
                 session.rollback()
-                print(f"[Parrilla] Erro ao gardar evento: {e}")
-                import traceback
-                traceback.print_exc()
+                print(f"[Parrilla] Error al guardar evento: {e}")
             finally:
                 session.close()
             dialog.destroy()
@@ -863,3 +684,5 @@ class ParrillaPanel(PanelContainer):
         cancel_btn.connect("clicked", lambda b: dialog.destroy())
         save_btn.connect("clicked", lambda b: do_save())
         dialog.show()
+
+

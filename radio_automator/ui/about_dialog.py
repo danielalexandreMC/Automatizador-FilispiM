@@ -27,26 +27,33 @@ def show_about_dialog(parent: Gtk.Window | None = None):
     dialog.set_comments(
         "Automatizador de radio de codigo abierto para Debian/Ubuntu.\n"
         "Playlists anidables, parrilla semanal interactiva, crossfade\n"
-        "dual-deck, conexion streaming y descarga automatica de podcasts."
+        "dual-deck, conexion streaming e descarga automatica de podcasts."
     )
-    dialog.set_copyright("2026 Radio Automator Contributors")
+    dialog.set_copyright("2025-2026 Daniel Alexandre (Radio FilispiM)")
     dialog.set_license_type(Gtk.License.GPL_3_0)
-    dialog.set_website("https://github.com/radio-automator")
+    dialog.set_website("https://github.com/danielalexandreMC/Automatizador-FilispiM")
     dialog.set_website_label("Repositorio en GitHub")
 
     # Creditos
     dialog.set_authors([
-        "Radio Automator Team",
+        "Daniel Alexandre (Rádio FilispiM)",
         "",
-        "Tecnologias:",
+        "Deseño e concepto:",
+        "  Ideia.gal",
+        "  Rádio FilispiM",
+        "",
+        "Tecnoloxias:",
         "  Python 3.11+",
         "  GTK4 (PyGObject)",
         "  GStreamer 1.x",
         "  SQLite (SQLAlchemy)",
     ])
-    dialog.set_artists(["Radio Automator Team"])
+    dialog.set_artists([
+        "Ideia.gal — Deseño visual",
+        "Rádio FilispiM — Concepto e produccion radiofonica",
+    ])
 
-    # Logo (si existe)
+    # Logo (se existe)
     try:
         from gi.repository import GdkPixbuf
         logo_path = "/usr/share/icons/hicolor/256x256/apps/radio-automator.png"

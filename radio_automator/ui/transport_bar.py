@@ -1,7 +1,7 @@
 """
 Barra de transporte (TransportBar).
 Controles de reproduccion, VU meters, e info de pista.
-Se ubica en la parte superior de la ventana, debajo de la HeaderBar.
+Se ubica en la parte inferior de la ventana, encima de la StatusBar.
 """
 
 import gi
@@ -35,8 +35,6 @@ class TransportBar(Gtk.Box):
         self._show_remaining = False  # Toggle: false=elapsed/total, true=remaining
 
         self._parrilla_event_name: str | None = None  # Nome do evento de parrilla actual
-        self._last_playing_path: str | None = None  # Para detectar cambios de pista
-        self._prev_state = None  # Estado anterior de reproduccion
 
         self._build_controls()
         self._connect_engine()
@@ -366,11 +364,6 @@ class TransportBar(Gtk.Box):
         if new_source != PlaybackSource.PARRILLA.value:
             def _update():
                 self._parrilla_event_name = None
-                self._last_playing_path = None  # Reset para detectar nova pista
-                # Limpar labels para que non mostren datos do evento anterior
-                if self._engine.state != PlaybackState.PLAYING:
-                    self._track_title.set_label("Sin reproduccion")
-                    self._track_artist.set_label("")
             if self._engine.is_available:
                 GLib.idle_add(_update)
             else:
@@ -380,7 +373,6 @@ class TransportBar(Gtk.Box):
         """Limpar o nome do evento cando remata un evento de parrilla."""
         def _update():
             self._parrilla_event_name = None
-            self._last_playing_path = None
         if self._engine.is_available:
             GLib.idle_add(_update)
         else:
@@ -423,59 +415,33 @@ class TransportBar(Gtk.Box):
             self._engine.seek(0)
 
     def _on_next(self, _btn=None):
-        """Avanzar: saltar a seguinte pista.
+        """Avanzar: saltar o que esta a soar e reproducir Continuidad.
 
-        - Se esta en Continuidad: para pista actual e reproduce seguinte directamente.
-        - Se esta nun evento de Parrilla: para evento e pasa a Continuidad.
+        - Se esta en Continuidad: saltar a seguinte pista inmediatamente.
+        - Se esta nun evento de Parrilla: parar evento e pasar a Continuidad.
         - Se a automatizacion non esta activa: activala (Continuidad).
         """
         automation = get_automation_engine()
-        engine = self._engine
-        queue = self._queue
 
-        if not automation.is_active:
-            automation.start()
-            return
+        if automation.is_active:
+            if automation.source == PlaybackSource.CONTINUIDAD:
+                # Saltar a seguinte pista de Continuidad inmediatamente.
+                # on_track_finished() avanza a cola e reproduce a seguinte
+                # (crea pipeline novo, cortando a pista actual).
+                automation.on_track_finished(self._engine.track_info)
 
-        # Limpar labels inmediatamente para que non mostren datos do tema anterior
-        self._track_title.set_label("Cargando...")
-        self._track_artist.set_label("")
-        self._last_playing_path = None  # Reset para que o callback de PLAYING detecte o cambio
-        self._parrilla_event_name = None
-
-        if automation.source == PlaybackSource.CONTINUIDAD:
-            # Continuidad: parar pista actual e avanzar cola directamente
-            engine.stop()
-            next_item = queue.play_next()
-            if next_item:
-                # NON asignar _last_playing_path aqui.
-                # O callback _on_engine_state_changed(PLAYING) detectara
-                # que _last_playing_path e None e actualizara os labels.
-                if next_item.is_streaming:
-                    engine.play_stream(next_item.filepath)
-                else:
-                    engine.play_file(next_item.filepath)
-            else:
-                # Cola esgotada, reiniciar Continuidad
-                automation._continuidad.item_index = 0
-                queue.clear()
+            elif automation.source == PlaybackSource.PARRILLA:
+                # Parrilla: parar evento e cambiar a Continuidad directamente
+                automation._stop_playback()
+                automation._current_event_id = None
                 automation._start_continuidad()
 
-        elif automation.source == PlaybackSource.PARRILLA:
-            # Parrilla: parar evento e cambiar a Continuidad
-            engine.stop()
-            queue.clear()
-            automation._current_event_id = None
-            automation._current_event_type = None
-            automation._current_folder_path = None
-            automation._event_content_finished = False
-            automation._set_source(PlaybackSource.NONE)
-            # tick() comprobara que non hai evento e iniciara Continuidad
-            automation.tick()
-
+            else:
+                # Outro estado (NONE etc): forzar tick
+                automation.tick()
         else:
-            # Outro estado (NONE etc): forzar tick
-            automation.tick()
+            # Automatizacion non activa: activala (reproducira Continuidad)
+            automation.start()
 
     def _on_stop(self, _btn=None):
         self._engine.stop()
@@ -496,21 +462,6 @@ class TransportBar(Gtk.Box):
             if state == PlaybackState.PLAYING:
                 self._btn_play.set_icon_name("media-playback-pause-symbolic")
                 self._btn_play.set_tooltip_text("Pausar")
-
-                # Detectar nova pista vs resume de pause
-                current_path = self._engine.track_info.filepath if self._engine.track_info else ""
-                if current_path and current_path != self._last_playing_path:
-                    # Nova pista: limpar datos antigos inmediatamente
-                    self._last_playing_path = current_path
-                    if not self._parrilla_event_name:
-                        # Non Parrilla (Continuidad/manual): mostrar nome do ficheiro
-                        from pathlib import Path as _P
-                        name = _P(current_path).stem if current_path else "..."
-                        self._track_title.set_label(name)
-                        self._track_artist.set_label("")
-                    else:
-                        # Parrilla: manter nome do evento, limpar subtitulo
-                        self._track_artist.set_label("")
             elif state == PlaybackState.PAUSED:
                 self._btn_play.set_icon_name("media-playback-start-symbolic")
                 self._btn_play.set_tooltip_text("Reanudar")
@@ -520,7 +471,6 @@ class TransportBar(Gtk.Box):
                 # Resetear display de tempo ao parar
                 self._time_label.set_label("0:00 / 0:00")
 
-            self._prev_state = state
             # Actualizar sidebar status
             self._update_sidebar_status(state)
 
@@ -545,7 +495,9 @@ class TransportBar(Gtk.Box):
             automation = get_automation_engine()
 
             if automation.is_active and automation.source in (
-                PlaybackSource.PARRILLA, PlaybackSource.CONTINUIDAD
+                PlaybackSource.PARRILLA,
+                PlaybackSource.CONTINUIDAD,
+                PlaybackSource.TIME_ANNOUNCE,
             ):
                 automation.on_track_finished(info)
                 return

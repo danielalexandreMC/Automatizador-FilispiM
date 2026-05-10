@@ -92,7 +92,7 @@ headerbar button:checked {
 /* ── Paneles de contenido ── */
 .ra-panel {
     background-color: #1A1A1A;
-    padding: 20px;
+    padding: 20px 28px;
 }
 
 .ra-panel-header {
